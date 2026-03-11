@@ -1,0 +1,43 @@
+---
+description: Python 코딩 표준 및 컨벤션
+globs: "**/*.py"
+alwaysApply: false
+---
+
+# Python 코딩 표준
+
+## Type Hinting
+
+모든 함수의 매개변수와 반환값에 타입 힌트를 반드시 명시한다.
+
+```python
+# BAD
+def get_price(stock_code):
+    ...
+
+# GOOD
+async def get_price(stock_code: str) -> StockPrice:
+    ...
+```
+
+## 비동기 우선
+
+KIS API 호출 등 I/O 작업은 반드시 `async/await`로 처리한다. httpx `AsyncClient`를 사용한다.
+
+## 하드코딩 금지
+
+민감 정보(API Key, Secret, 계좌번호)와 설정값은 반드시 `.env` + `pydantic-settings`로 관리한다. 코드에 직접 값을 넣지 않는다.
+
+## 네이밍 컨벤션
+
+- 파일명: `snake_case.py`
+- 클래스: `PascalCase`
+- 함수/변수: `snake_case`
+- 상수: `UPPER_SNAKE_CASE`
+- DTO 클래스: `~Request`, `~Response` 접미사
+- Repository 클래스: `~Repository` 접미사
+- Service 클래스: `~Service` 접미사
+
+## Pydantic 모델
+
+요청/응답 DTO는 Pydantic `BaseModel`을 상속한다. 도메인 모델도 `BaseModel` 또는 `dataclass`를 사용한다.

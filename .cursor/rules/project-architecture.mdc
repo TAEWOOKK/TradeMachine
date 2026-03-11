@@ -1,0 +1,32 @@
+---
+description: TradeMachine 프로젝트 계층형 아키텍처 규칙
+alwaysApply: true
+---
+
+# 계층형 아키텍처 (Layered Architecture)
+
+Spring 유사 구조를 따른다. 계층 간 책임을 절대 섞지 않는다.
+
+## 계층별 책임
+
+- **Router** (`app/router/`): HTTP 요청/응답 처리만 담당. 비즈니스 로직 금지.
+- **Service** (`app/service/`): 비즈니스 로직 전담. 매매 전략, 조건 판단 수행. Repository를 호출한다.
+- **Repository** (`app/repository/`): 외부 API 통신(KIS API)과 DB I/O만 담당. 비즈니스 판단 금지.
+- **Model** (`app/model/`): Domain 모델과 DTO를 분리. `domain.py` / `dto.py`로 관리.
+
+## 의존성 방향
+
+```
+Router → Service → Repository
+                 → Model
+```
+
+- 상위 계층이 하위 계층에 의존한다. 역방향 의존 금지.
+- FastAPI `Depends`를 통한 의존성 주입(DI) 패턴을 사용한다.
+
+## 금지 사항
+
+- Router에서 httpx 직접 호출 금지
+- Service에서 FastAPI Request/Response 객체 직접 참조 금지
+- Repository에서 매매 전략 판단 로직 금지
+- 계층을 건너뛰는 호출 금지 (Router → Repository 직접 호출 등)
