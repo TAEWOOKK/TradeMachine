@@ -60,7 +60,7 @@ class Settings(BaseSettings):
     trading_interval_minutes: int = 5
 
     # 신호 확인
-    signal_lookback_days: int = 7
+    signal_lookback_days: int = 14
     signal_confirm_days: int = 3
     sell_confirm_days: int = 2
 
@@ -121,7 +121,7 @@ ABNORMAL_CHANGE_RATE: float = 30.0      # 비정상 변동률 기준 (%)
 MAX_API_RETRY: int = 3                  # API 재시도 횟수
 API_RETRY_DELAY_SECONDS: int = 2        # 재시도 대기 (초)
 MAX_CONSECUTIVE_FAILURES: int = 5       # 연속실패 시 스캔 SKIP
-RATE_LIMIT_PER_SECOND: int = 10         # 초당 API 호출 제한
+RATE_LIMIT_PER_SECOND: int = 2          # 초당 API 호출 제한 (모의투자 서버 기준, 실전 시 10으로 상향)
 TRADING_CUTOFF_MINUTES: int = 10        # 장 마감 N분 전 매수 금지
 
 # ── KRX 휴장일 (매년 갱신) ──
@@ -251,12 +251,6 @@ class TokenExpiredError(KisApiError):
 
 class RateLimitError(KisApiError):
     """호출 제한 초과 (HTTP 429)"""
-
-class InsufficientDataError(Exception):
-    """일봉 데이터 부족 (MA 계산 불가)"""
-
-class MarketClosedError(Exception):
-    """장 미개장 / 휴장일"""
 ```
 
 ---
@@ -405,6 +399,7 @@ class OrderReason(str, Enum):
     TAKE_PROFIT = "TAKE_PROFIT"
     TRAILING_STOP = "TRAILING_STOP"
     MAX_HOLDING = "MAX_HOLDING"
+    UPTREND_ENTRY = "UPTREND_ENTRY"
 
 @dataclass
 class Position:
@@ -612,11 +607,11 @@ class MarketDataRepository:
         if not output:
             raise KisApiError("NO_OUTPUT", "응답에 output 필드 없음")
 
-        def safe_int(val: str, default: int = 0) -> int:
-            try:
-                return int(val) if val else default
-            except (ValueError, TypeError):
-                return default
+        # safe_int, safe_float는 app/core/utils.py에서 import하여 사용
+        # safe_int: val.replace(",", "") 쉼표 제거 후 int 변환
+        # safe_float: val.replace(",", "") 쉼표 제거 후 float 변환
+        # 예외 처리: ValueError, TypeError, AttributeError → default 반환
+        from app.core.utils import safe_int, safe_float
 
         result = StockPrice(
             stock_code=stock_code,
@@ -635,6 +630,12 @@ class MarketDataRepository:
 
         self._cache.set(cache_key, result, ttl_seconds=5.0)
         return result
+
+    async def get_index_price(self, index_code: str = "0001") -> StockPrice:
+        """업종지수(KOSPI 등) 현재가 조회 — inquire-index-price API 사용.
+        TR_ID: FHPUP02100000, FID_COND_MRKT_DIV_CODE="U"
+        시장 필터에서 KOSPI MA(20) 비교 시 사용."""
+        ...
 
     async def get_daily_chart(
         self, stock_code: str, days: int = 60
@@ -738,8 +739,8 @@ class OrderRepository:
         self._auth = auth_repo
         self._rate_limiter = rate_limiter
 
-    async def get_balance(self) -> list[Position]:
-        """잔고 조회 → Position 리스트 반환"""
+    async def get_balance(self) -> list[Position] | None:
+        """잔고 조회 → Position 리스트 반환. 실패 시 None."""
         tr_id = self._auth.get_tr_id("TTTC8434R")
         headers = await self._auth.get_common_headers(tr_id)
         params = {
@@ -762,7 +763,7 @@ class OrderRepository:
 
     async def cancel_order(self, order_no: str, quantity: int) -> bool:
         """미체결 주문 취소"""
-        tr_id = self._auth.get_tr_id("TTTC0804U")
+        tr_id = self._auth.get_tr_id("TTTC0803U")
         # POST order-rvsecncl + hashkey
         # 반환: 성공 여부
 
@@ -840,12 +841,18 @@ class OrderLogRepository:
         return None
 
     async def get_first_buy_date(self, stock_code: str) -> str | None:
-        """해당 종목의 현재 보유 시작일 반환 (보유 기간 체크용)"""
+        """해당 종목의 현재 보유 시작일 반환 (보유 기간 체크용).
+        가장 최근 매수일이 아닌, 마지막 매도 이후 첫 매수일을 반환한다.
+        서브쿼리로 마지막 매도일을 구한 뒤, 그 이후 ASC LIMIT 1로 첫 매수일을 조회."""
         row = await self._db.fetch_one(
             """SELECT created_at FROM orders
                WHERE stock_code = ? AND order_type = 'BUY' AND success = 1
-               ORDER BY created_at DESC LIMIT 1""",
-            (stock_code,),
+                 AND created_at > COALESCE(
+                   (SELECT MAX(created_at) FROM orders
+                    WHERE stock_code = ? AND order_type = 'SELL' AND success = 1),
+                   '1970-01-01')
+               ORDER BY created_at ASC LIMIT 1""",
+            (stock_code, stock_code),
         )
         if row:
             return row["created_at"][:10]  # "2026-03-11"
@@ -924,6 +931,24 @@ class TradingService:
         self._trailing_activated: set[str] = set()  # 트레일링 스탑 활성화된 종목
 ```
 
+#### 5.0 `recover_state()` — 서버 재시작 시 인메모리 상태 복구
+
+```python
+    async def recover_state(self) -> None:
+        """서버 재시작 시 DB + 현재 잔고에서 인메모리 상태 복구.
+        init_dependencies()에서 TradingService 생성 직후 호출."""
+        # 1) DB에서 금일 매수 건수 복구
+        today = datetime.now().strftime("%Y-%m-%d")
+        counts = await self._order_log.get_today_counts(today)
+        self._daily_buy_count = counts["buy_count"]
+        # 2) 잔고에서 트레일링 스탑 상태 복구
+        positions = await self._order.get_balance() or []
+        for pos in positions:
+            self._highest_prices[pos.stock_code] = pos.current_price
+            if pos.profit_rate >= self._settings.trailing_stop_activate:
+                self._trailing_activated.add(pos.stock_code)
+```
+
 #### 5.1 `run_scan()` — 스캔 사이클 메인 (F2)
 
 ```python
@@ -988,12 +1013,22 @@ class TradingService:
 
             # [F2-4] 관심 종목 매수 판단
             if buy_allowed:
+                # 시장 필터를 여기서 1회만 체크 (종목 루프 밖)
+                market_ok = True
+                if self._settings.enable_market_filter:
+                    kospi_data = await self._market.get_index_price("0001")
+                    kospi_candles = await self._market.get_daily_chart("0001", days=25)
+                    if len(kospi_candles) >= 20:
+                        kospi_ma20 = sum(c.close for c in kospi_candles[:20]) / 20
+                        if kospi_data.current_price < kospi_ma20:
+                            market_ok = False
+
                 holding_codes = {p.stock_code for p in positions}
                 current_holding = len(positions)
                 for code in self._settings.watch_list_codes:
                     try:
                         result = await self._evaluate_buy(
-                            code, current_holding, holding_codes, unfilled_codes,
+                            code, current_holding, holding_codes, unfilled_codes, market_ok,
                         )
                         if result == "BOUGHT":
                             buy_count += 1
@@ -1050,14 +1085,17 @@ class TradingService:
         if pos.stock_code in unfilled_codes:
             return "SKIP"
 
+        # STEP 3.5: 수익률 직접 재계산 (KIS API 제공값 대신 직접 계산)
+        profit_rate = (price_data.current_price - pos.avg_price) / pos.avg_price * 100
+
         # STEP 4: 손절 (최우선, P0) — % 단위 직접 비교
-        if pos.profit_rate <= self._settings.stop_loss_rate:
-            await self._execute_sell(pos, OrderReason.STOP_LOSS)
+        if profit_rate <= self._settings.stop_loss_rate:
+            await self._execute_sell(pos, OrderReason.STOP_LOSS, price_data.current_price)
             return "SOLD"
 
         # STEP 5: 익절 (P1)
-        if pos.profit_rate >= self._settings.take_profit_rate:
-            await self._execute_sell(pos, OrderReason.TAKE_PROFIT)
+        if profit_rate >= self._settings.take_profit_rate:
+            await self._execute_sell(pos, OrderReason.TAKE_PROFIT, price_data.current_price)
             return "SOLD"
 
         # STEP 5.5: 트레일링 스탑 (P2)
@@ -1065,14 +1103,14 @@ class TradingService:
         cur = price_data.current_price
         self._highest_prices[code] = max(self._highest_prices.get(code, 0), cur)
 
-        if pos.profit_rate >= self._settings.trailing_stop_activate:
+        if profit_rate >= self._settings.trailing_stop_activate:
             self._trailing_activated.add(code)
 
         if code in self._trailing_activated:
             highest = self._highest_prices[code]
             threshold = highest * (1 - self._settings.trailing_stop_rate / 100)
             if cur <= threshold:
-                await self._execute_sell(pos, OrderReason.TRAILING_STOP)
+                await self._execute_sell(pos, OrderReason.TRAILING_STOP, cur)
                 self._highest_prices.pop(code, None)
                 self._trailing_activated.discard(code)
                 return "SOLD"
@@ -1085,13 +1123,13 @@ class TradingService:
                 datetime.now().date(),
             )
             if biz_days > self._settings.max_holding_days:
-                await self._execute_sell(pos, OrderReason.MAX_HOLDING)
+                await self._execute_sell(pos, OrderReason.MAX_HOLDING, cur)
                 self._cleanup_trailing(code)
                 return "SOLD"
 
         # STEP 6: 데드크로스 (P4)
         if await self._check_dead_cross(pos.stock_code):
-            await self._execute_sell(pos, OrderReason.DEAD_CROSS)
+            await self._execute_sell(pos, OrderReason.DEAD_CROSS, cur)
             self._cleanup_trailing(code)
             return "SOLD"
 
@@ -1107,13 +1145,27 @@ class TradingService:
         current_holding_count: int,
         holding_codes: set[str],
         unfilled_codes: set[str],
+        market_ok: bool,
     ) -> str:
-        """관심 종목 1개에 대한 매수 판단. "BOUGHT" / "SKIP" 반환"""
+        """관심 종목 1개에 대한 매수 판단. "BOUGHT" / "SKIP" 반환.
+        market_ok는 run_scan()에서 1회 계산한 시장 필터 결과."""
 
-        # STEP 1: 현재가 조회
+        # STEP 1: 중복/한도 체크 (API 호출 없이 빠르게 필터링)
+        if stock_code in holding_codes:
+            return "SKIP"
+        if stock_code in unfilled_codes:
+            return "SKIP"
+        if current_holding_count >= self._settings.max_holding_count:
+            return "SKIP"
+        if self._daily_buy_count >= self._settings.max_daily_buy_count:
+            return "SKIP"
+
+        # STEP 2: 시장 상황 필터 (run_scan()에서 1회 체크한 결과)
+        if not market_ok:
+            return "SKIP"
+
+        # STEP 3: 현재가 조회 + 안전성 필터
         price_data = await self._market.get_current_price(stock_code)
-
-        # STEP 2: 안전성 필터
         if price_data.is_stopped or price_data.is_managed:
             return "SKIP"
         if price_data.is_caution or price_data.is_clearing:
@@ -1123,16 +1175,7 @@ class TradingService:
         if abs(price_data.change_rate) > C.ABNORMAL_CHANGE_RATE:
             return "SKIP"
 
-        # STEP 2.5: 시장 상황 필터 (KOSPI 하락장 매수 억제)
-        if self._settings.enable_market_filter:
-            kospi_data = await self._market.get_current_price("0001", market_code="U")
-            kospi_candles = await self._market.get_daily_chart("0001", days=25)
-            if len(kospi_candles) >= 20:
-                kospi_ma20 = sum(c.close for c in kospi_candles[:20]) / 20
-                if kospi_data.current_price < kospi_ma20:
-                    return "SKIP"  # KOSPI가 MA(20) 아래 → 하락장, 매수 보류
-
-        # STEP 3: 품질 필터
+        # STEP 4: 품질 필터
         if price_data.current_price < C.MIN_STOCK_PRICE:
             return "SKIP"
         if price_data.trading_value < C.MIN_TRADING_VALUE:
@@ -1144,50 +1187,44 @@ class TradingService:
         if price_data.current_price == price_data.upper_limit:
             return "SKIP"
 
-        # STEP 4~6: 중복/한도 체크
-        if stock_code in holding_codes:
-            return "SKIP"
-        if stock_code in unfilled_codes:
-            return "SKIP"
-        if current_holding_count >= self._settings.max_holding_count:
-            return "SKIP"
-
-        # STEP 6.3: 일일 매수 횟수 제한
-        if self._daily_buy_count >= self._settings.max_daily_buy_count:
-            return "SKIP"
-
-        # STEP 6.5: 재매수 쿨다운
+        # STEP 5: 재매수 쿨다운
         last_sell = await self._order_log.get_last_sell_time(stock_code)
         if last_sell:
             hours_since = (datetime.now() - last_sell).total_seconds() / 3600
             if hours_since < self._settings.rebuy_cooldown_hours:
                 return "SKIP"
 
-        # STEP 7: 일봉 + MA 계산
+        # STEP 6: 일봉 + MA 계산
         candles = await self._market.get_daily_chart(stock_code)
-        if len(candles) < C.MA_LONG_PERIOD:
+        if len(candles) < C.MA_LONG_PERIOD + self._settings.signal_lookback_days:
             return "SKIP"
 
         ma_result = self._calculate_ma(candles)
 
-        # STEP 8: 골든크로스 판별
-        if not self._check_golden_cross(ma_result, price_data.current_price):
-            return "SKIP"
+        # STEP 7: 골든크로스 판별 → 실패 시 상승추세 판별
+        buy_reason = OrderReason.GOLDEN_CROSS
+        is_golden = self._check_golden_cross(ma_result, price_data.current_price)
 
-        # STEP 8.5: 거래량 확인 (교차일 거래량 >= 평균 × 1.5)
-        cross_idx = self._find_cross_day_index(ma_result)
-        if cross_idx is not None and not self._check_volume_confirmation(candles, cross_idx):
-            return "SKIP"
+        if is_golden:
+            # 거래량 확인 (교차일 거래량 >= 평균 × 1.5)
+            cross_idx = self._find_cross_day_index(ma_result)
+            if cross_idx is not None and not self._check_volume_confirmation(candles, cross_idx):
+                return "SKIP"
+        else:
+            # 골든크로스 미충족 → 상승추세 진입(UPTREND_ENTRY) 판별
+            if not self._check_existing_uptrend(ma_result, candles, price_data.current_price):
+                return "SKIP"
+            buy_reason = OrderReason.UPTREND_ENTRY
 
-        # STEP 8.7: RSI 과열 필터
+        # STEP 7.5: RSI 과열 필터
         rsi = self._calculate_rsi(candles)
         if rsi is not None:
             if rsi > self._settings.rsi_overbought:
-                return "SKIP"  # 과매수
+                return "SKIP"
             if rsi < self._settings.rsi_oversold:
-                return "SKIP"  # 과매도
+                return "SKIP"
 
-        # STEP 9: 매수 수량 (수수료 포함 계산)
+        # STEP 8: 매수 수량 (수수료 포함 계산)
         available = await self._order.get_available_cash(stock_code)
         invest = int(available * self._settings.max_investment_ratio)
         price_with_fee = price_data.current_price * (1 + C.BUY_FEE_RATE)
@@ -1195,13 +1232,13 @@ class TradingService:
         if quantity <= 0:
             return "SKIP"
 
-        # STEP 10: 매수 실행
+        # STEP 9: 매수 실행
         result = await self._order.execute_order(
             stock_code, OrderType.BUY, quantity,
         )
         await self._order_log.save_order(
-            stock_code, OrderType.BUY, OrderReason.GOLDEN_CROSS,
-            quantity, 0, result, datetime.now().isoformat(),
+            stock_code, OrderType.BUY, buy_reason,
+            quantity, price_data.current_price, result, datetime.now().isoformat(),
         )
         return "BOUGHT" if result.success else "SKIP"
 ```
@@ -1276,7 +1313,7 @@ class TradingService:
 
         ma = self._calculate_ma(candles)
 
-        # 최근 N일 내 MA5가 MA20 위→아래 교차? (매도는 매수(7일)보다 짧게 5일)
+        # 최근 N일 내 MA5가 MA20 위→아래 교차? (매도는 매수(14일)보다 짧게 5일)
         sell_lookback = 5
         cross_day = -1
         for i in range(sell_lookback):
@@ -1357,7 +1394,49 @@ class TradingService:
         return cross_volume >= avg_volume * self._settings.volume_confirm_ratio
 ```
 
-#### 5.10 `_cleanup_trailing()` — 트레일링 상태 정리
+#### 5.10 `_check_existing_uptrend()` — 상승추세 진입 판별
+
+```python
+    def _check_existing_uptrend(
+        self, ma: MaResult, candles: list[DailyCandle], current_price: int
+    ) -> bool:
+        """골든크로스 lookback 밖이지만 이미 상승추세에 있는 종목 감지.
+        조건: MA5>MA20 5일 연속, 현재가>MA20, MA20 상승, 괴리율 5% 이내,
+        최근 5일 중 거래량이 20일 평균 이상인 날 2일 이상."""
+        if len(ma.ma_short) < 5 or len(ma.ma_long) < 5:
+            return False
+
+        # [1] MA5 > MA20 최근 5일 연속 유지
+        for i in range(5):
+            if ma.ma_short[i] <= ma.ma_long[i]:
+                return False
+
+        # [2] 현재가 > MA20
+        if current_price <= ma.ma_long[0]:
+            return False
+
+        # [3] MA20 상승 추세 (오늘 MA20 > 3일전 MA20)
+        if len(ma.ma_long) > 3 and ma.ma_long[0] <= ma.ma_long[3]:
+            return False
+
+        # [4] MA5와 MA20의 괴리율 5% 이내
+        if ma.ma_long[0] > 0:
+            gap_rate = (ma.ma_short[0] - ma.ma_long[0]) / ma.ma_long[0] * 100
+            if gap_rate > 5.0:
+                return False
+
+        # [5] 최근 5일 중 거래량이 20일 평균 이상인 날이 2일 이상
+        if len(candles) < 20:
+            return False
+        avg_vol_20 = sum(c.volume for c in candles[:20]) / 20
+        high_vol_days = sum(1 for c in candles[:5] if c.volume >= avg_vol_20)
+        if high_vol_days < 2:
+            return False
+
+        return True
+```
+
+#### 5.11 `_cleanup_trailing()` — 트레일링 상태 정리 (기존 5.10)
 
 ```python
     def _cleanup_trailing(self, code: str) -> None:
@@ -1366,7 +1445,7 @@ class TradingService:
         self._trailing_activated.discard(code)
 ```
 
-#### 5.11 `_count_business_days()` — 영업일 계산
+#### 5.12 `_count_business_days()` — 영업일 계산
 
 ```python
     def _count_business_days(self, start: date, end: date) -> int:
@@ -1380,11 +1459,12 @@ class TradingService:
         return count
 ```
 
-#### 5.12 `_execute_sell()` — 매도 실행 헬퍼
+#### 5.13 `_execute_sell()` — 매도 실행 헬퍼
 
 ```python
-    async def _execute_sell(self, pos: Position, reason: OrderReason) -> None:
-        """매도 주문 실행 + DB 기록. 손절 실패 시 1회 재시도."""
+    async def _execute_sell(self, pos: Position, reason: OrderReason, price: int = 0) -> bool:
+        """매도 주문 실행 + DB 기록. 손절 실패 시 1회 재시도.
+        price: 현재가 (DB 기록용). 반환: 매도 성공 여부."""
         result = await self._order.execute_order(
             pos.stock_code, OrderType.SELL, pos.quantity,
         )
@@ -1397,11 +1477,12 @@ class TradingService:
 
         await self._order_log.save_order(
             pos.stock_code, OrderType.SELL, reason,
-            pos.quantity, 0, result, datetime.now().isoformat(),
+            pos.quantity, price, result, datetime.now().isoformat(),
         )
+        return result.success
 ```
 
-#### 5.13 `run_pre_market()` — 장 시작 전 준비 (F1)
+#### 5.14 `run_pre_market()` — 장 시작 전 준비 (F1)
 
 ```python
     async def run_pre_market(self) -> None:
@@ -1428,7 +1509,7 @@ class TradingService:
         await self._cleanup_unfilled_orders()
 ```
 
-#### 5.14 `run_post_market()` — 장 마감 처리 (F3)
+#### 5.15 `run_post_market()` — 장 마감 처리 (F3)
 
 ```python
     async def run_post_market(self) -> None:
@@ -1464,9 +1545,12 @@ class TradingService:
         )
 
         await self._report.save_balance_snapshot(today, positions)
+
+        # F3-4: 90일 이전 스캔 로그 정리
+        await self._report.cleanup_old_scan_logs(days=90)
 ```
 
-#### 5.15 `_cleanup_unfilled_orders()` — 미체결 정리
+#### 5.16 `_cleanup_unfilled_orders()` — 미체결 정리
 
 ```python
     async def _cleanup_unfilled_orders(self) -> set[str]:

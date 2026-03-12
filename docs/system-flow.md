@@ -185,7 +185,7 @@ FastAPI 서버 기동, 외부 의존성 연결, 스케줄러 등록
   │
   │  결과의 각 미체결 주문에 대해:
   │    API: POST /uapi/domestic-stock/v1/trading/order-rvsecncl
-  │    TR ID: TTTC0804U (실전) / VTTC0804U (모의)
+  │    TR ID: TTTC0803U (실전) / VTTC0803U (모의) + RVSE_CNCL_DVSN_CD="02"(취소)
   │    → 주문 취소 실행
   │
   ▼
@@ -287,7 +287,7 @@ Params:
 응답 파싱:
   미체결 주문 목록에서:
     매수 주문 (sll_buy_dvsn_cd == "02"):
-      → 자동 취소 (API: POST order-rvsecncl, TR ID: TTTC0804U)
+      → 자동 취소 (API: POST order-rvsecncl, TR ID: TTTC0803U, RVSE_CNCL_DVSN_CD="02")
     매도 주문 (sll_buy_dvsn_cd == "01"):
       → 유지 (손절 매도일 수 있으므로 취소하지 않음)
 
@@ -342,7 +342,8 @@ Params:
   ▼
 [STEP 4] 손절 체크 (최우선, P0)
   │
-  │  profit_rate = F2-1에서 조회한 evlu_pfls_rt (%)
+  │  수익률 직접 재계산 (KIS API evlu_pfls_rt 대신):
+  │    profit_rate = (현재가 - 매입평균가) / 매입평균가 × 100
   │
   │  profit_rate <= STOP_LOSS_RATE (-5.0)?
   │  → YES: ★ 즉시 매도 실행 → [SELL] 으로 이동
@@ -462,7 +463,31 @@ Params:
   │
   ▼ (종목별 반복)
 
-[STEP 1] 현재가 시세 조회
+[STEP 1] 보유/한도 체크 (API 호출 없이 인메모리 빠른 필터링)
+  │
+  │  F2-1 잔고 목록에 이 종목이 있음?
+  │  → YES: SKIP "이미 보유"
+  │
+  │  F2-2 미체결 목록에 이 종목의 매수 주문이 있음?
+  │  → YES: SKIP "매수 주문 진행 중"
+  │
+  │  현재 보유 종목 수 >= MAX_HOLDING_COUNT (5)?
+  │  → YES: SKIP "보유 한도 초과"
+  │
+  │  오늘 매수 성공 횟수 >= MAX_DAILY_BUY_COUNT (3)?
+  │  → YES: SKIP "일일 매수 한도"
+  │
+  ▼
+[STEP 2] 시장 상황 필터 (market_ok 플래그)
+  │
+  │  ※ 시장 필터는 run_scan() 내에서 종목 루프 진입 전 1회만 체크된다.
+  │  KOSPI 현재가 조회 + KOSPI 일봉 25일 조회 → KOSPI MA(20) 계산
+  │  KOSPI 현재가 < MA(20)? → market_ok = false
+  │  market_ok 플래그가 각 종목의 _evaluate_buy()에 전달된다.
+  │  market_ok == false → SKIP "하락장 매수 보류"
+  │
+  ▼
+[STEP 3] 현재가 시세 조회 + 안전성 필터
   │
   │  API: GET /uapi/domestic-stock/v1/quotations/inquire-price
   │  TR ID: FHKST01010100
@@ -484,26 +509,16 @@ Params:
   │
   │  실패 시 → 이 종목 SKIP
   │
-  ▼
-[STEP 2] 종목 안전성 필터
-  │
-  │  is_stopped == "Y"     → SKIP "거래 정지"
-  │  is_managed != "00"    → SKIP "관리종목"  (※ "00"이 정상, 코드값 확인 필요)
-  │  is_caution == "Y"     → SKIP "투자유의"
-  │  is_clearing == "Y"    → SKIP "정리매매"
-  │  current_price <= 0    → SKIP "비정상 데이터"
-  │  abs(change_rate) > 30 → SKIP "비정상 변동"
+  │  안전성 필터:
+  │    is_stopped == "Y"     → SKIP "거래 정지"
+  │    is_managed != "00"    → SKIP "관리종목"  (※ "00"이 정상, 코드값 확인 필요)
+  │    is_caution == "Y"     → SKIP "투자유의"
+  │    is_clearing == "Y"    → SKIP "정리매매"
+  │    current_price <= 0    → SKIP "비정상 데이터"
+  │    abs(change_rate) > 30 → SKIP "비정상 변동"
   │
   ▼
-[STEP 2.5] 시장 상황 필터 (ENABLE_MARKET_FILTER=true 일 때)
-  │
-  │  KOSPI 현재가 조회 (종목코드 "0001", market_code="U", 캐시 5초)
-  │  KOSPI 일봉 25일 조회 (캐시 5분)
-  │  KOSPI MA(20) 계산
-  │  KOSPI 현재가 < MA(20)? → SKIP "하락장 매수 보류"
-  │
-  ▼
-[STEP 3] 종목 품질 필터
+[STEP 4] 종목 품질 필터
   │
   │  current_price < MIN_STOCK_PRICE (5,000원)
   │    → SKIP "저가주 제외"
@@ -521,38 +536,14 @@ Params:
   │    → SKIP "상한가 종목"
   │
   ▼
-[STEP 4] 이미 보유 중인지 확인
-  │
-  │  F2-1 잔고 목록에 이 종목이 있음?
-  │  → YES: SKIP "이미 보유"
-  │
-  ▼
-[STEP 5] 미체결 매수 주문 있는지 확인
-  │
-  │  F2-2 미체결 목록에 이 종목의 매수 주문이 있음?
-  │  → YES: SKIP "매수 주문 진행 중"
-  │
-  ▼
-[STEP 6] 보유 종목 수 한도 확인
-  │
-  │  현재 보유 종목 수 >= MAX_HOLDING_COUNT (5)?
-  │  → YES: SKIP "보유 한도 초과"
-  │
-  ▼
-[STEP 6.3] 일일 매수 횟수 확인
-  │
-  │  오늘 매수 성공 횟수 >= MAX_DAILY_BUY_COUNT (3)?
-  │  → YES: SKIP "일일 매수 한도"
-  │
-  ▼
-[STEP 6.5] 재매수 쿨다운 확인
+[STEP 5] 재매수 쿨다운 확인
   │
   │  orders 테이블에서 이 종목의 최근 SELL 성공 시각 조회
   │  현재 시각 - 매도 시각 < REBUY_COOLDOWN_HOURS (24시간)?
   │  → YES: SKIP "재매수 쿨다운"
   │
   ▼
-[STEP 7] 일봉 데이터 조회 & MA 계산
+[STEP 6] 일봉 데이터 조회 & MA 계산
   │
   │  API: GET /uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice
   │  TR ID: FHKST03010100
@@ -565,7 +556,7 @@ Params:
   │    FID_ORG_ADJ_PRC: "0"           ← 수정주가
   │
   │  데이터 검증:
-  │    조회된 일봉 수 < MA_LONG_PERIOD (20)?
+  │    조회된 일봉 수 < MA_LONG_PERIOD + signal_lookback_days (20+14=34)?
   │    → SKIP "데이터 부족"
   │
   │  종가 배열 추출: close_prices (최신순)
@@ -576,18 +567,32 @@ Params:
   │    MA20[i] = sum(close_prices[i:i+20]) / 20
   │
   ▼
-[STEP 8] 골든크로스 판별 (확인 기간 포함)
+[STEP 7] 골든크로스 판별 (확인 기간 포함)
   │
   │  ※ 조건식 상세: trading-strategy.md §3.1 참조
-  │  요약 (4단계 모두 통과해야 매수):
-  │    [8-a] 최근 7일 내 MA5가 MA20 아래→위 교차 발생?
-  │    [8-b] 교차 후 3일 연속 MA5 > MA20 유지?
-  │    [8-c] 현재가 > MA20?
-  │    [8-d] MA20 상승 추세? (오늘 MA20 > 3일전 MA20)
+  │  요약 (4단계 모두 통과해야 골든크로스 매수):
+  │    [7-a] 최근 14일 내 MA5가 MA20 아래→위 교차 발생?
+  │    [7-b] 교차 후 3일 연속 MA5 > MA20 유지?
+  │    [7-c] 현재가 > MA20?
+  │    [7-d] MA20 상승 추세? (오늘 MA20 > 3일전 MA20)
+  │    → 모두 YES: GOLDEN_CROSS 매수 → [STEP 7.5] 거래량 확인으로 이동
+  │    → 하나라도 NO: [STEP 7-E] 상승추세 판별로 이동
+  │
+  ▼
+[STEP 7-E] 상승추세 진입 판별 (UPTREND_ENTRY) — 골든크로스 미충족 시
+  │
+  │  골든크로스 lookback(14일) 밖에서 교차했지만 상승추세 유지 중인 종목 감지
+  │  조건 (모두 충족):
+  │    [E-1] MA5 > MA20이 최근 5일 연속 유지
+  │    [E-2] 현재가 > MA20
+  │    [E-3] MA20 상승 추세 (오늘 MA20 > 3일전 MA20)
+  │    [E-4] MA5와 MA20 괴리율 5% 이내
+  │    [E-5] 최근 5일 중 거래량 >= 20일 평균인 날이 2일 이상
+  │    → 모두 YES: UPTREND_ENTRY 매수 → [STEP 7.7] RSI 필터로 이동
   │    → 하나라도 NO: SKIP
   │
   ▼
-[STEP 8.5] 거래량 확인 (Volume Confirmation)
+[STEP 7.5] 거래량 확인 (Volume Confirmation)
   │
   │  교차일의 거래량 (candles[cross_day].volume)
   │  MA(20) 평균 거래량 = 최근 20일 거래량 평균
@@ -595,7 +600,7 @@ Params:
   │  → NO: SKIP "거래량 미수반 교차"
   │
   ▼
-[STEP 8.7] RSI 과열 필터
+[STEP 7.7] RSI 과열 필터
   │
   │  RSI(14) 계산 (최근 14일 종가 기준)
   │  RSI > RSI_OVERBOUGHT (70)? → SKIP "과매수"
@@ -603,9 +608,9 @@ Params:
   │  30 <= RSI <= 70 → 통과
   │
   ▼
-[STEP 9] 매수 수량 계산
+[STEP 8] 매수 수량 계산
   │
-  │  [9-a] 매수 가능 금액 조회
+  │  [8-a] 매수 가능 금액 조회
   │    API: GET /uapi/domestic-stock/v1/trading/inquire-psbl-order
   │    TR ID: TTTC8908R (실전) / VTTC8908R (모의)
   │    Params:
@@ -618,11 +623,11 @@ Params:
   │      OVRS_ICLD_YN: "Y"
   │    응답: available_cash = int(output["ord_psbl_cash"])
   │
-  │  [9-b] 투자 금액 산정
+  │  [8-b] 투자 금액 산정
   │    invest_amount = available_cash × MAX_INVESTMENT_RATIO (0.1)
   │    예: 10,000,000 × 0.1 = 1,000,000원
   │
-  │  [9-c] 수량 계산
+  │  [8-c] 수량 계산
   │    quantity = invest_amount // current_price  (정수 나눗셈)
   │    예: 1,000,000 // 73,000 = 13주
   │
@@ -630,14 +635,14 @@ Params:
   │    → SKIP "잔액 부족"
   │
   ▼
-[STEP 10] 매수 실행 ★
+[STEP 9] 매수 실행 ★
   │
-  │  [10-a] Hashkey 발급
+  │  [9-a] Hashkey 발급
   │    API: POST /uapi/hashkey
   │    Body: 매수 주문과 동일한 Body
   │    응답: HASH
   │
-  │  [10-b] 매수 주문
+  │  [9-b] 매수 주문
   │    API: POST /uapi/domestic-stock/v1/trading/order-cash
   │    TR ID: TTTC0802U (실전) / VTTC0802U (모의)
   │    Headers: { ..., hashkey: "{HASH}" }
@@ -655,7 +660,7 @@ Params:
   │      rt_cd == "1" → 실패, 에러 로그
   │
   │  결과 기록:
-  │    → DB INSERT: orders 테이블 (stock_code, BUY, GOLDEN_CROSS, 수량, 성공여부, ODNO)
+  │    → DB INSERT: orders 테이블 (stock_code, BUY, GOLDEN_CROSS 또는 UPTREND_ENTRY, 수량, 성공여부, ODNO)
   │    → 로그: trading.log에 매수 실행 기록
   │
   ▼
@@ -778,7 +783,7 @@ httpx AsyncClient 종료
 | F1-1 토큰 발급 | `/oauth2/tokenP` | - | POST |
 | F1-3 잔고 조회 | `inquire-balance` | TTTC8434R | GET |
 | F1-4 미체결 조회 | `inquire-daily-ccld` | TTTC8001R | GET |
-| F1-4 주문 취소 | `order-rvsecncl` | TTTC0804U | POST |
+| F1-4 주문 취소 | `order-rvsecncl` | TTTC0803U | POST |
 | F2-1 잔고 조회 | `inquire-balance` | TTTC8434R | GET |
 | F2-2 미체결 조회 | `inquire-daily-ccld` | TTTC8001R | GET |
 | F2-3 현재가 조회 | `inquire-price` | FHKST01010100 | GET |

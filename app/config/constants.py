@@ -1,0 +1,34 @@
+from __future__ import annotations
+
+# ── 이동평균선 (업계 표준) ──
+MA_SHORT_PERIOD: int = 5
+MA_LONG_PERIOD: int = 20
+RSI_PERIOD: int = 14
+
+# ── 매매 비용 (증권사·정부 제도) ──
+BUY_FEE_RATE: float = 0.00015
+SELL_FEE_RATE: float = 0.00015
+SELL_TAX_RATE: float = 0.0018
+SLIPPAGE_RATE: float = 0.0015
+
+# ── 종목 품질 필터 ──
+MIN_STOCK_PRICE: int = 5_000
+MIN_TRADING_VALUE: int = 1_000_000_000
+MIN_TRADING_VOLUME: int = 50_000
+MIN_MARKET_CAP: int = 500_000_000_000
+
+# ── 안전장치 ──
+ABNORMAL_CHANGE_RATE: float = 30.0
+MAX_API_RETRY: int = 3
+API_RETRY_DELAY_SECONDS: int = 2
+MAX_CONSECUTIVE_FAILURES: int = 5
+RATE_LIMIT_PER_SECOND: int = 2
+TRADING_CUTOFF_MINUTES: int = 10
+
+# ── KRX 휴장일 (매년 갱신) ──
+KRX_HOLIDAYS: set[str] = {
+    "20260101", "20260216", "20260217", "20260218",
+    "20260302", "20260501", "20260505", "20260525",
+    "20260817", "20260924", "20260925", "20260928",
+    "20261005", "20261009", "20261225", "20261231",
+}

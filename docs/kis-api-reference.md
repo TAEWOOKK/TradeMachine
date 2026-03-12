@@ -156,8 +156,8 @@ Base Path: `/uapi/domestic-stock/v1/trading`
 |------|-----|
 | Method | `POST` |
 | Path | `/uapi/domestic-stock/v1/trading/order-rvsecncl` |
-| TR ID (실전) | `TTTC0804U` |
-| TR ID (모의) | `VTTC0804U` |
+| TR ID (실전) | `TTTC0803U` (+ `RVSE_CNCL_DVSN_CD="02"` 로 취소 구분) |
+| TR ID (모의) | `VTTC0803U` |
 | 우리 프로젝트 매핑 | `OrderRepository.cancel()` |
 
 ### 3.5 주식 잔고 조회
@@ -400,8 +400,7 @@ Base Path: `/uapi/domestic-stock/v1/quotations`
 |------|-----------|-----------|
 | 매수 주문 | `TTTC0802U` | `VTTC0802U` |
 | 매도 주문 | `TTTC0801U` | `VTTC0801U` |
-| 주문 정정 | `TTTC0803U` | `VTTC0803U` |
-| 주문 취소 | `TTTC0804U` | `VTTC0804U` |
+| 주문 정정/취소 | `TTTC0803U` | `VTTC0803U` | `RVSE_CNCL_DVSN_CD`: "01"=정정, "02"=취소 |
 | 잔고 조회 | `TTTC8434R` | `VTTC8434R` |
 | 매수가능 조회 | `TTTC8908R` | `VTTC8908R` |
 | 일별체결 조회 | `TTTC8001R` | `VTTC8001R` |

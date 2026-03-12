@@ -75,22 +75,21 @@ TradeMachine/
 ```sql
 CREATE TABLE orders (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    created_at      TEXT    NOT NULL,    -- ISO 8601 (2026-03-11T10:05:00)
+    created_at      TEXT    NOT NULL,    -- YYYY-MM-DD HH:MM:SS
     stock_code      TEXT    NOT NULL,    -- 종목코드 (005930)
-    stock_name      TEXT,                -- 종목명 (삼성전자) — 조회 가능 시
     order_type      TEXT    NOT NULL,    -- BUY / SELL
-    order_reason    TEXT    NOT NULL,    -- GOLDEN_CROSS / STOP_LOSS / TAKE_PROFIT / TRAILING_STOP / MAX_HOLDING / DEAD_CROSS
-    order_method    TEXT    NOT NULL,    -- MARKET(시장가) / LIMIT(지정가)
+    order_reason    TEXT    NOT NULL,    -- GOLDEN_CROSS / UPTREND_ENTRY / STOP_LOSS / TAKE_PROFIT / TRAILING_STOP / MAX_HOLDING / DEAD_CROSS
+    order_method    TEXT    NOT NULL DEFAULT 'MARKET',  -- MARKET(시장가) / LIMIT(지정가)
     quantity        INTEGER NOT NULL,    -- 주문 수량
-    price           INTEGER NOT NULL DEFAULT 0,  -- 주문 가격 (시장가면 0)
+    price           INTEGER NOT NULL,    -- 주문 가격 (시장가면 0)
     kis_order_no    TEXT,                -- KIS 주문번호 (ODNO)
-    success         INTEGER NOT NULL,    -- 1=성공, 0=실패
+    success         INTEGER NOT NULL DEFAULT 0,  -- 1=성공, 0=실패
     error_message   TEXT,                -- 실패 시 에러 메시지
     scan_time       TEXT                 -- 해당 스캔 시작 시각
 );
 
-CREATE INDEX idx_orders_created_at ON orders(created_at);
-CREATE INDEX idx_orders_stock_code ON orders(stock_code);
+CREATE INDEX IF NOT EXISTS idx_orders_created_at ON orders(created_at);
+CREATE INDEX IF NOT EXISTS idx_orders_stock_code ON orders(stock_code);
 ```
 
 | 필드 | 출처 |
@@ -101,6 +100,14 @@ CREATE INDEX idx_orders_stock_code ON orders(stock_code);
 
 **예상 데이터량:** 하루 0~10건, 월 ~200건, 연 ~2,400건
 
+#### 주요 쿼리 패턴
+
+| 용도 | 쿼리 설명 |
+|------|----------|
+| 재매수 쿨다운 | 해당 종목의 가장 최근 SELL 성공 시각 (`ORDER BY created_at DESC LIMIT 1`) |
+| 보유 기간 체크 (`get_first_buy_date`) | **마지막 매도 이후 첫 매수일**을 반환. 서브쿼리로 해당 종목의 마지막 SELL 성공 시각을 구한 뒤, 그 이후의 BUY 성공 기록 중 `ORDER BY created_at ASC LIMIT 1`로 첫 매수일을 조회한다. 가장 최근 매수일이 아님에 유의. |
+| 일일 집계 | 오늘 날짜 LIKE로 매수/매도/실패 건수 집계 |
+
 ---
 
 ### 2.2 테이블: `daily_reports` (일일 리포트)
@@ -109,16 +116,15 @@ CREATE INDEX idx_orders_stock_code ON orders(stock_code);
 
 ```sql
 CREATE TABLE daily_reports (
-    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
-    report_date         TEXT    NOT NULL UNIQUE,  -- 영업일 (2026-03-11)
-    total_buy_count     INTEGER NOT NULL DEFAULT 0,
-    total_sell_count    INTEGER NOT NULL DEFAULT 0,
-    total_unfilled      INTEGER NOT NULL DEFAULT 0,
-    holding_count       INTEGER NOT NULL DEFAULT 0,  -- 보유 종목 수
-    total_eval_amount   INTEGER NOT NULL DEFAULT 0,  -- 총 평가금액 (원)
-    total_eval_profit   INTEGER NOT NULL DEFAULT 0,  -- 총 평가손익 (원)
-    total_profit_rate   REAL    NOT NULL DEFAULT 0,   -- 총 수익률 (%)
-    created_at          TEXT    NOT NULL
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    report_date     TEXT    NOT NULL UNIQUE,  -- 영업일 (2026-03-11)
+    buy_count       INTEGER NOT NULL DEFAULT 0,
+    sell_count      INTEGER NOT NULL DEFAULT 0,
+    unfilled_count  INTEGER NOT NULL DEFAULT 0,
+    holding_count   INTEGER NOT NULL DEFAULT 0,  -- 보유 종목 수
+    eval_amount     INTEGER NOT NULL DEFAULT 0,  -- 총 평가금액 (원)
+    eval_profit     INTEGER NOT NULL DEFAULT 0,  -- 총 평가손익 (원)
+    profit_rate     REAL    NOT NULL DEFAULT 0.0  -- 총 수익률 (%)
 );
 ```
 
@@ -144,11 +150,10 @@ CREATE TABLE balance_snapshots (
     avg_price       REAL    NOT NULL,    -- 매입평균가 (소수점 가능)
     current_price   INTEGER NOT NULL,    -- 당일 종가 (현재가)
     eval_amount     INTEGER NOT NULL,    -- 평가금액 (현재가 × 수량)
-    profit_rate     REAL    NOT NULL,    -- 수익률 (%)
-    created_at      TEXT    NOT NULL
+    profit_rate     REAL    NOT NULL     -- 수익률 (%)
 );
 
-CREATE INDEX idx_balance_snapshot_date ON balance_snapshots(snapshot_date);
+CREATE INDEX IF NOT EXISTS idx_balance_snapshot_date ON balance_snapshots(snapshot_date);
 ```
 
 | 필드 | 출처 |
@@ -240,7 +245,15 @@ TradeMachine/
 
 ## 4. 저장소 #3 — 메모리 (런타임)
 
-앱 실행 중에만 유효한 데이터. 앱 재시작 시 KIS API로 재조회하여 복구.
+앱 실행 중에만 유효한 데이터. 앱 재시작 시 `recover_state()`에서 DB + KIS API 잔고 조회로 자동 복구.
+
+#### 재시작 시 복구 항목
+| 데이터 | 복구 방법 |
+|--------|----------|
+| `_daily_buy_count` | DB `orders` 테이블에서 금일 성공 BUY 건수 조회 |
+| `_highest_prices` | 현재 잔고의 현재가로 재초기화 |
+| `_trailing_activated` | 현재 수익률이 `trailing_stop_activate` 이상이면 자동 복원 |
+| Access Token | `run_pre_market()` 또는 첫 API 호출 시 재발급 |
 
 ### 4.1 메모리 데이터 목록
 
@@ -257,7 +270,7 @@ TradeMachine/
 | 캐시 대상 | TTL | 키 | 값 | 절약 효과 |
 |-----------|-----|------|------|----------|
 | 현재가 시세 | **5초** | `price:{종목코드}` | API 응답 전체 | 같은 스캔 내 보유+관심 종목 겹침 시 |
-| 일봉 데이터 | **5분** (1스캔) | `daily:{종목코드}` | 종가 배열 + MA 계산 결과 | 보유종목 매도판단 + 관심종목 매수판단에서 재사용 |
+| 일봉 데이터 | **5분** (1스캔) | `chart:{종목코드}:{days}` | 종가 배열 + MA 계산 결과 | 보유종목 매도판단 + 관심종목 매수판단에서 재사용 |
 
 ```
 캐시 흐름 예시:
@@ -370,7 +383,7 @@ TradeMachine/
 ## 10. 의존성 추가
 
 ```
-# requirements.txt에 추가
+# pyproject.toml [project] dependencies에 포함
 aiosqlite              # SQLite 비동기 드라이버
 ```
 
