@@ -1,5 +1,7 @@
 # TradeMachine
 
+![TradeMachine Dashboard](docs/dashboard-screenshot.png)
+
 한국투자증권(KIS) Open API 기반 **국내 주식 자동매매 시스템**.
 
 규칙 기반(Rule-based) 스윙 트레이딩 전략을 사용하며, 골든크로스/데드크로스, RSI, 거래량 확인, 시장 필터 등의 기술적 지표로 매수/매도를 판단합니다.
