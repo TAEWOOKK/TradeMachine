@@ -172,6 +172,8 @@ class TradingService:
             current_time = now.time()
             if current_time < dt_time(9, 5):
                 self._phase = "WAITING_MARKET"
+                self._emit(EventType.SCAN_START,
+                    "⏰ 장이 열렸지만 시초가 변동이 큰 시간이라 09:05부터 분석을 시작합니다")
                 return
             if current_time > dt_time(15, 25):
                 self._phase = "MARKET_CLOSED"
@@ -471,12 +473,16 @@ class TradingService:
                 f"📊 {name} ({price_data.current_price:,}원) — 최소 주가 미달로 제외",
                 self._stock_data(stock_code, price_data.current_price, skip="최소주가미달"))
             return "SKIP"
-        if price_data.trading_value < C.MIN_TRADING_VALUE:
+        elapsed_ratio = self._market_elapsed_ratio()
+        adj_value = int(C.MIN_TRADING_VALUE * elapsed_ratio)
+        adj_volume = int(C.MIN_TRADING_VOLUME * elapsed_ratio)
+
+        if price_data.trading_value < adj_value:
             self._emit(EventType.BUY_EVAL,
                 f"📊 {name} ({price_data.current_price:,}원) — 거래대금 부족으로 제외",
                 self._stock_data(stock_code, price_data.current_price, skip="거래대금부족"))
             return "SKIP"
-        if price_data.volume < C.MIN_TRADING_VOLUME:
+        if price_data.volume < adj_volume:
             self._emit(EventType.BUY_EVAL,
                 f"📊 {name} ({price_data.current_price:,}원) — 거래량 부족으로 제외",
                 self._stock_data(stock_code, price_data.current_price, skip="거래량부족"))
@@ -755,6 +761,16 @@ class TradingService:
     def _cleanup_trailing(self, code: str) -> None:
         self._highest_prices.pop(code, None)
         self._trailing_activated.discard(code)
+
+    @staticmethod
+    def _market_elapsed_ratio() -> float:
+        """장 시작(09:00)~종료(15:30) 중 현재 경과 비율. 최소 0.05(5%)."""
+        now = datetime.now()
+        market_open = now.replace(hour=9, minute=0, second=0, microsecond=0)
+        market_close = now.replace(hour=15, minute=30, second=0, microsecond=0)
+        total = (market_close - market_open).total_seconds()
+        elapsed = (now - market_open).total_seconds()
+        return max(0.05, min(1.0, elapsed / total))
 
     def _count_business_days(self, start: date, end: date) -> int:
         count = 0

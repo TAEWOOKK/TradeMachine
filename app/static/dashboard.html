@@ -54,6 +54,7 @@ body{font-family:-apple-system,'Pretendard','Noto Sans KR',sans-serif;background
 .sum-card:hover{border-color:var(--border-light)}
 .sum-value{font-size:24px;font-weight:800;font-variant-numeric:tabular-nums;margin-bottom:2px}
 .sum-label{font-size:12px;color:var(--text-dim)}
+.sum-note{font-size:10px;color:var(--text-dim);opacity:.7}
 
 /* positions */
 .section{margin-bottom:16px}
@@ -191,11 +192,11 @@ body{font-family:-apple-system,'Pretendard','Noto Sans KR',sans-serif;background
   </div>
   <div class="sum-card">
     <div class="sum-value" id="sum-total-assets" style="color:var(--text)">-</div>
-    <div class="sum-label">총 자산</div>
+    <div class="sum-label">총 자산 <span id="sum-assets-note" class="sum-note"></span></div>
   </div>
   <div class="sum-card">
     <div class="sum-value" id="sum-cash" style="color:var(--cyan)">-</div>
-    <div class="sum-label">가용 현금</div>
+    <div class="sum-label">가용 현금 <span id="sum-cash-note" class="sum-note"></span></div>
   </div>
   <div class="sum-card">
     <div class="sum-value" id="sum-profit" style="color:var(--text-dim)">-</div>
@@ -273,6 +274,8 @@ const events = [];
 let sseConnected = false;
 let countdownSeconds = -1;
 let nextScanTime = null;
+let lastCash = 0;
+let lastInMarket = false;
 let activeFilter = 'all';
 
 function pad2(n){return String(n).padStart(2,'0');}
@@ -310,8 +313,12 @@ function updateStatus(s) {
   else{mt.className='mode-tag mode-live';mt.textContent='💰 실전투자';}
 
   $('sum-buy').innerHTML = s.daily_buy_count+'<span style="font-size:14px;color:var(--text-dim)"> / '+s.max_daily_buy+'</span>';
-  if(s.total_assets>0) $('sum-total-assets').textContent=fmtWon(s.total_assets);
-  if(s.total_cash>0) $('sum-cash').textContent=fmtWon(s.total_cash);
+  lastInMarket = s.in_market_hours;
+  if(s.total_cash>0){
+    lastCash = s.total_cash;
+    $('sum-cash').textContent=fmtWon(s.total_cash);
+    $('sum-cash-note').textContent=s.in_market_hours?'':'(종가 기준)';
+  }
   $('server-time').textContent = s.server_time;
 
   countdownSeconds = s.next_scan_seconds;
@@ -344,6 +351,10 @@ function updatePositions(positions) {
     el.innerHTML='<div class="pos-empty">아직 보유한 종목이 없어요. 매수 조건이 충족되면 자동으로 매수합니다.</div>';
     $('sum-holding').textContent='0';
     $('sum-profit').textContent='-';$('sum-profit').style.color='var(--text-dim)';
+    if(lastCash>0){
+      $('sum-total-assets').textContent=fmtWon(lastCash);
+      $('sum-assets-note').textContent='';
+    }
     return;
   }
   $('sum-holding').textContent=positions.length;
@@ -354,6 +365,12 @@ function updatePositions(positions) {
   const sign=totalRate>=0?'+':'';
   $('sum-profit').textContent=sign+totalRate.toFixed(2)+'%';
   $('sum-profit').style.color=totalRate>0?'var(--red)':totalRate<0?'var(--blue)':'var(--text-dim)';
+
+  if(lastCash>0){
+    const calcTotal=lastCash+totalEval;
+    $('sum-total-assets').textContent=fmtWon(calcTotal);
+    $('sum-assets-note').textContent=lastInMarket?'':'(현재가 기준)';
+  }
 
   el.innerHTML=positions.map(p=>{
     const cls=p.profit_rate>0?'profit-up':p.profit_rate<0?'profit-down':'profit-zero';
@@ -621,8 +638,7 @@ async function loadPerformance(){
     const dw=data.capital_events||[];
 
     const last=h[h.length-1];
-    if(last.total_assets>0) $('sum-total-assets').textContent=fmtWon(last.total_assets);
-    if(last.total_cash>0) $('sum-cash').textContent=fmtWon(last.total_cash);
+    if(last.total_cash>0 && !lastCash) $('sum-cash').textContent=fmtWon(last.total_cash);
     const cp=last.cumulative_pnl||0;
     const cpSign=cp>=0?'+':'';
     $('sum-cumulative').textContent=cpSign+fmtWon(cp);
