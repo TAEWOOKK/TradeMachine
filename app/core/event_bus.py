@@ -6,7 +6,10 @@ import time
 from collections import deque
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import AsyncIterator
+from typing import TYPE_CHECKING, AsyncIterator
+
+if TYPE_CHECKING:
+    from app.repository.report_repository import ReportRepository
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +39,10 @@ class EventBus:
         self._subscribers: list[asyncio.Queue[BotEvent]] = []
         self._history: deque[BotEvent] = deque(maxlen=max_history)
         self._error_history: deque[BotEvent] = deque(maxlen=50)
+        self._report_repo: ReportRepository | None = None
+
+    def set_report_repo(self, repo: ReportRepository) -> None:
+        self._report_repo = repo
 
     def emit(self, event: BotEvent) -> None:
         self._history.append(event)
@@ -51,6 +58,23 @@ class EventBus:
 
         for q in dead:
             self._subscribers.remove(q)
+
+        if self._report_repo is not None:
+            try:
+                loop = asyncio.get_running_loop()
+                loop.create_task(self._persist_event(event))
+            except RuntimeError:
+                pass
+
+    async def _persist_event(self, event: BotEvent) -> None:
+        if self._report_repo is None:
+            return
+        try:
+            await self._report_repo.save_bot_event(
+                event.type.value, event.message, event.timestamp, event.data,
+            )
+        except Exception:
+            logger.debug("이벤트 DB 저장 실패", exc_info=True)
 
     async def subscribe(self) -> AsyncIterator[BotEvent]:
         q: asyncio.Queue[BotEvent] = asyncio.Queue(maxsize=100)

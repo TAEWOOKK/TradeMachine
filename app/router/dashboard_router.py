@@ -8,8 +8,9 @@ from fastapi import APIRouter, Depends
 from fastapi.responses import HTMLResponse, StreamingResponse
 
 from app.config.stock_names import get_name
-from app.core.dependencies import get_report_repo, get_trading_service
+from app.core.dependencies import get_order_log_repo, get_report_repo, get_trading_service
 from app.core.event_bus import EventBus, get_event_bus
+from app.repository.order_log_repository import OrderLogRepository
 from app.repository.report_repository import ReportRepository
 from app.service.trading_service import TradingService
 
@@ -27,6 +28,8 @@ async def dashboard_page() -> HTMLResponse:
 @router.get("/api/status")
 async def get_status(
     svc: TradingService = Depends(get_trading_service),
+    order_log_repo: OrderLogRepository = Depends(get_order_log_repo),
+    report_repo: ReportRepository = Depends(get_report_repo),
 ) -> dict:
     status = svc.status
     now = datetime.now()
@@ -43,6 +46,17 @@ async def get_status(
 
     status["next_scan_seconds"] = remaining
     status["next_scan_time"] = next_scan.strftime("%H:%M") if remaining >= 0 else None
+
+    today = now.strftime("%Y-%m-%d")
+    realized = await order_log_repo.get_today_realized_pnl(today)
+    status["today_realized_pnl"] = realized["total_pnl"]
+    status["today_trades"] = realized["trades"]
+
+    yesterday = await report_repo.get_yesterday_report(today)
+    prev_cumulative = yesterday.get("cumulative_pnl", 0) if yesterday else 0
+    status["cumulative_pnl"] = prev_cumulative + realized["total_pnl"]
+    status["initial_assets"] = yesterday.get("total_assets", 0) if yesterday else 0
+
     return status
 
 
@@ -88,39 +102,75 @@ async def get_last_scan(
 
 
 @router.get("/api/events/history")
-async def get_event_history() -> list[dict]:
+async def get_event_history(
+    report_repo: ReportRepository = Depends(get_report_repo),
+) -> list[dict]:
     bus = get_event_bus()
-    return [
-        {
-            "type": e.type.value,
-            "message": e.message,
-            "timestamp": e.timestamp,
-            "data": e.data,
-        }
-        for e in bus.recent_events[-100:]
-    ]
+    mem_events = bus.recent_events
+    if len(mem_events) >= 5:
+        return [
+            {
+                "type": e.type.value,
+                "message": e.message,
+                "timestamp": e.timestamp,
+                "data": e.data,
+            }
+            for e in mem_events[-200:]
+        ]
+    return await report_repo.get_recent_bot_events(limit=200)
 
 
 @router.get("/api/events/errors")
-async def get_error_history() -> list[dict]:
+async def get_error_history(
+    report_repo: ReportRepository = Depends(get_report_repo),
+) -> list[dict]:
     bus = get_event_bus()
-    return [
-        {
-            "type": e.type.value,
-            "message": e.message,
-            "timestamp": e.timestamp,
-            "data": e.data,
-        }
-        for e in bus.recent_errors
-    ]
+    mem_errors = bus.recent_errors
+    if mem_errors:
+        return [
+            {
+                "type": e.type.value,
+                "message": e.message,
+                "timestamp": e.timestamp,
+                "data": e.data,
+            }
+            for e in mem_errors
+        ]
+    rows = await report_repo.get_recent_bot_events(limit=50)
+    return [r for r in rows if r["type"] == "error"]
 
 
 @router.get("/api/performance")
 async def get_performance(
+    svc: TradingService = Depends(get_trading_service),
+    order_log_repo: OrderLogRepository = Depends(get_order_log_repo),
     report_repo: ReportRepository = Depends(get_report_repo),
 ) -> dict:
     history = await report_repo.get_performance_history(days=90)
     capital_events = await report_repo.get_capital_events(days=90)
+
+    today = datetime.now().strftime("%Y-%m-%d")
+    already_has_today = any(h["report_date"] == today for h in history)
+
+    if not already_has_today:
+        acct = svc.status
+        realized = await order_log_repo.get_today_realized_pnl(today)
+        yesterday = await report_repo.get_yesterday_report(today)
+        prev_cumulative = yesterday.get("cumulative_pnl", 0) if yesterday else 0
+        total_assets = acct.get("total_assets", 0)
+        total_cash = acct.get("total_cash", 0)
+
+        history.append({
+            "report_date": today,
+            "eval_amount": acct.get("stock_eval", 0),
+            "eval_profit": realized["total_pnl"],
+            "profit_rate": 0.0,
+            "total_cash": total_cash,
+            "total_assets": total_assets,
+            "deposit_withdrawal": 0,
+            "cumulative_pnl": prev_cumulative + realized["total_pnl"],
+        })
+
     return {
         "history": history,
         "capital_events": capital_events,

@@ -126,6 +126,25 @@ class Database:
                 note TEXT
             );
 
+            CREATE TABLE IF NOT EXISTS bot_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                event_type TEXT NOT NULL,
+                message TEXT NOT NULL,
+                timestamp REAL NOT NULL,
+                data TEXT,
+                created_at TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_bot_events_created_at
+                ON bot_events(created_at);
+
+            CREATE TABLE IF NOT EXISTS trailing_state (
+                stock_code TEXT PRIMARY KEY,
+                highest_price INTEGER NOT NULL,
+                activated INTEGER NOT NULL DEFAULT 0,
+                updated_at TEXT NOT NULL
+            );
+
             CREATE INDEX IF NOT EXISTS idx_orders_created_at ON orders(created_at);
             CREATE INDEX IF NOT EXISTS idx_orders_stock_code ON orders(stock_code);
             CREATE INDEX IF NOT EXISTS idx_balance_snapshot_date ON balance_snapshots(snapshot_date);

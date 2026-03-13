@@ -203,8 +203,9 @@ body{font-family:-apple-system,'Pretendard','Noto Sans KR',sans-serif;background
     <div class="sum-label">평가 수익률</div>
   </div>
   <div class="sum-card">
-    <div class="sum-value" id="sum-cumulative" style="color:var(--text-dim)">-</div>
-    <div class="sum-label">누적 순수익</div>
+    <div class="sum-value" id="sum-today-pnl" style="color:var(--text-dim)">0원</div>
+    <div class="sum-label">오늘 실현손익</div>
+    <div id="sum-cumulative-line" style="font-size:11px;color:var(--text-dim);margin-top:2px">누적: -</div>
   </div>
 </div>
 
@@ -218,8 +219,9 @@ body{font-family:-apple-system,'Pretendard','Noto Sans KR',sans-serif;background
   </div>
   <div class="section">
     <div class="section-title"><span class="icon">📈</span> 자산 추이 (최근 90일)</div>
-    <div style="background:var(--card);border:1px solid var(--border);border-radius:var(--radius-sm);padding:16px;height:280px">
-      <canvas id="perf-chart"></canvas>
+    <div style="background:var(--card);border:1px solid var(--border);border-radius:var(--radius-sm);padding:12px">
+      <div style="height:160px"><canvas id="chart-assets"></canvas></div>
+      <div style="height:100px;margin-top:4px"><canvas id="chart-pnl"></canvas></div>
     </div>
   </div>
 </div>
@@ -320,6 +322,20 @@ function updateStatus(s) {
     $('sum-cash-note').textContent=s.in_market_hours?'':'(종가 기준)';
   }
   $('server-time').textContent = s.server_time;
+
+  if(s.today_realized_pnl !== undefined){
+    const tp = s.today_realized_pnl;
+    const tpSign = tp>=0?'+':'';
+    $('sum-today-pnl').textContent = tpSign+fmtWon(tp);
+    $('sum-today-pnl').style.color = tp>0?'var(--red)':tp<0?'var(--blue)':'var(--text-dim)';
+  }
+  if(s.cumulative_pnl !== undefined){
+    const cp = s.cumulative_pnl;
+    const cpSign = cp>=0?'+':'';
+    const cpEl = $('sum-cumulative-line');
+    cpEl.textContent = '누적: '+cpSign+fmtWon(cp);
+    cpEl.style.color = cp>0?'var(--red)':cp<0?'var(--blue)':'var(--text-dim)';
+  }
 
   countdownSeconds = s.next_scan_seconds;
   nextScanTime = s.next_scan_time;
@@ -622,9 +638,16 @@ async function loadHistory(){
   }catch(e){}
 }
 
-let perfChart=null;
+let chartAssets=null, chartPnl=null;
 
-function pnlColor(v){return v>0?'rgba(244,63,94,':'rgba(99,102,241,';}
+const CHART_TOOLTIP = {
+  backgroundColor:'#181b25',borderColor:'#323650',borderWidth:1,
+  titleColor:'#eef0f6',bodyColor:'#9ba1b7',
+  callbacks:{label:ctx=>{
+    const v=ctx.parsed.y;const s=v>=0?'+':'';
+    return ctx.dataset.label+': '+s+v.toLocaleString()+'원';
+  }}
+};
 
 async function loadPerformance(){
   try{
@@ -639,10 +662,6 @@ async function loadPerformance(){
 
     const last=h[h.length-1];
     if(last.total_cash>0 && !lastCash) $('sum-cash').textContent=fmtWon(last.total_cash);
-    const cp=last.cumulative_pnl||0;
-    const cpSign=cp>=0?'+':'';
-    $('sum-cumulative').textContent=cpSign+fmtWon(cp);
-    $('sum-cumulative').style.color=cp>0?'var(--red)':cp<0?'var(--blue)':'var(--text-dim)';
 
     const pnlColors=pnl.map(v=>v>=0?'rgba(244,63,94,0.7)':'rgba(99,102,241,0.7)');
 
@@ -661,39 +680,51 @@ async function loadPerformance(){
       };
     });
 
-    const ctx=$('perf-chart').getContext('2d');
-    if(perfChart) perfChart.destroy();
-    perfChart=new Chart(ctx,{
-      type:'bar',
-      data:{
-        labels,
-        datasets:[
-          {type:'line',label:'총자산',data:assets,borderColor:'#a78bfa',backgroundColor:'rgba(167,139,250,0.1)',
-           borderWidth:2,pointRadius:2,pointHoverRadius:4,fill:true,tension:0.3,yAxisID:'y'},
-          {type:'bar',label:'누적 순수익',data:pnl,backgroundColor:pnlColors,
-           borderRadius:3,barPercentage:0.6,yAxisID:'y1'},
-        ]
-      },
+    const fmtAxis=v=>{const a=Math.abs(v);const s=v<0?'-':'';
+      return s+(a>=1e8?(a/1e8).toFixed(1)+'억':a>=1e4?(a/1e4).toFixed(0)+'만':a.toLocaleString());};
+
+    if(chartAssets) chartAssets.destroy();
+    chartAssets=new Chart($('chart-assets').getContext('2d'),{
+      type:'line',
+      data:{labels, datasets:[{
+        label:'총자산', data:assets,
+        borderColor:'#a78bfa', backgroundColor:'rgba(167,139,250,0.1)',
+        borderWidth:2, pointRadius:3, pointHoverRadius:5, fill:true, tension:0.3,
+      }]},
       options:{
-        responsive:true,maintainAspectRatio:false,
+        responsive:true, maintainAspectRatio:false,
         interaction:{mode:'index',intersect:false},
         plugins:{
-          legend:{display:true,labels:{color:'#9ba1b7',font:{size:11},boxWidth:12,padding:10}},
-          tooltip:{
-            backgroundColor:'#181b25',borderColor:'#323650',borderWidth:1,titleColor:'#eef0f6',bodyColor:'#9ba1b7',
-            callbacks:{label:function(ctx){
-              const v=ctx.parsed.y;const s=v>=0?'+':'';
-              return ctx.dataset.label+': '+s+v.toLocaleString()+'원';
-            }}
-          },
+          legend:{display:true,labels:{color:'#9ba1b7',font:{size:11},boxWidth:12,padding:8}},
+          tooltip:CHART_TOOLTIP,
           annotation:Object.keys(annotations).length?{annotations}:undefined,
         },
         scales:{
           x:{grid:{color:'#252838'},ticks:{color:'#646b82',font:{size:10},maxRotation:0}},
-          y:{position:'left',grid:{color:'#252838'},ticks:{color:'#a78bfa',font:{size:10},
-            callback:v=>v>=1e8?(v/1e8).toFixed(1)+'억':v>=1e4?(v/1e4).toFixed(0)+'만':v}},
-          y1:{position:'right',grid:{display:false},ticks:{color:'#646b82',font:{size:10},
-            callback:v=>v>=1e4?(v/1e4).toFixed(0)+'만':v}},
+          y:{grid:{color:'#252838'},
+            ticks:{color:'#a78bfa',font:{size:10},callback:fmtAxis}},
+        }
+      }
+    });
+
+    if(chartPnl) chartPnl.destroy();
+    chartPnl=new Chart($('chart-pnl').getContext('2d'),{
+      type:'bar',
+      data:{labels, datasets:[{
+        label:'누적 순수익', data:pnl, backgroundColor:pnlColors,
+        borderRadius:3, barPercentage:0.6,
+      }]},
+      options:{
+        responsive:true, maintainAspectRatio:false,
+        interaction:{mode:'index',intersect:false},
+        plugins:{
+          legend:{display:true,labels:{color:'#9ba1b7',font:{size:10},boxWidth:10,padding:6}},
+          tooltip:CHART_TOOLTIP,
+        },
+        scales:{
+          x:{grid:{color:'#252838'},ticks:{color:'#646b82',font:{size:9},maxRotation:0}},
+          y:{grid:{color:'#252838'},
+            ticks:{color:'#646b82',font:{size:9},callback:fmtAxis}},
         }
       }
     });

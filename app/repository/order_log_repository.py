@@ -98,3 +98,79 @@ class OrderLogRepository:
             "sell_count": row["sell_count"],
             "fail_count": row["fail_count"],
         }
+
+    async def get_today_realized_pnl(self, today: str) -> dict:
+        """오늘 매도로 실현된 손익 계산."""
+        rows = await self._db.fetch_all(
+            """
+            SELECT s.stock_code, s.quantity, s.price AS sell_price,
+                   COALESCE(
+                       (SELECT AVG(b.price) FROM orders b
+                        WHERE b.stock_code = s.stock_code
+                          AND b.order_type = 'BUY' AND b.success = 1
+                          AND b.created_at > COALESCE(
+                              (SELECT MAX(ps.created_at) FROM orders ps
+                               WHERE ps.stock_code = s.stock_code
+                                 AND ps.order_type = 'SELL' AND ps.success = 1
+                                 AND ps.created_at < s.created_at),
+                              '0000-00-00'
+                          )
+                       ), s.price
+                   ) AS avg_buy_price
+            FROM orders s
+            WHERE s.order_type = 'SELL' AND s.success = 1
+              AND s.created_at LIKE ?
+            """,
+            (f"{today}%",),
+        )
+        total_pnl = 0
+        trades: list[dict] = []
+        for r in rows:
+            pnl = int((r["sell_price"] - r["avg_buy_price"]) * r["quantity"])
+            total_pnl += pnl
+            trades.append({
+                "stock_code": r["stock_code"],
+                "quantity": r["quantity"],
+                "sell_price": r["sell_price"],
+                "avg_buy_price": int(r["avg_buy_price"]),
+                "pnl": pnl,
+            })
+        return {"total_pnl": total_pnl, "trades": trades}
+
+    # ── Trailing State 영속화 ──
+
+    async def save_trailing_state(
+        self, stock_code: str, highest_price: int, activated: bool,
+    ) -> None:
+        await self._db.execute(
+            """
+            INSERT INTO trailing_state (stock_code, highest_price, activated, updated_at)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(stock_code) DO UPDATE SET
+                highest_price = MAX(excluded.highest_price, trailing_state.highest_price),
+                activated = excluded.activated,
+                updated_at = excluded.updated_at
+            """,
+            (stock_code, highest_price, 1 if activated else 0,
+             datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        )
+
+    async def load_trailing_states(self) -> list[dict]:
+        return await self._db.fetch_all(
+            "SELECT stock_code, highest_price, activated FROM trailing_state"
+        )
+
+    async def delete_trailing_state(self, stock_code: str) -> None:
+        await self._db.execute(
+            "DELETE FROM trailing_state WHERE stock_code = ?",
+            (stock_code,),
+        )
+
+    async def cleanup_trailing_states(self, holding_codes: set[str]) -> None:
+        """보유하지 않는 종목의 trailing state 정리."""
+        rows = await self._db.fetch_all(
+            "SELECT stock_code FROM trailing_state"
+        )
+        for row in rows:
+            if row["stock_code"] not in holding_codes:
+                await self.delete_trailing_state(row["stock_code"])

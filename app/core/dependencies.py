@@ -27,13 +27,14 @@ _trading_service: TradingService | None = None
 _trading_scheduler: TradingScheduler | None = None
 _market_repo: MarketDataRepository | None = None
 _order_repo: OrderRepository | None = None
+_order_log_repo: OrderLogRepository | None = None
 _report_repo: ReportRepository | None = None
 
 
 async def init_dependencies() -> None:
     global _settings, _database, _http_client
     global _trading_service, _trading_scheduler, _market_repo, _order_repo
-    global _report_repo
+    global _order_log_repo, _report_repo
 
     setup_logging()
 
@@ -57,17 +58,20 @@ async def init_dependencies() -> None:
             _http_client, _settings, auth_repo, cache, rate_limiter,
         )
         _order_repo = OrderRepository(_http_client, _settings, auth_repo, rate_limiter)
-        order_log_repo = OrderLogRepository(_database)
+        _order_log_repo = OrderLogRepository(_database)
         _report_repo = ReportRepository(_database)
+
+        event_bus = get_event_bus()
+        event_bus.set_report_repo(_report_repo)
 
         _trading_service = TradingService(
             auth_repo=auth_repo,
             market_repo=_market_repo,
             order_repo=_order_repo,
-            order_log_repo=order_log_repo,
+            order_log_repo=_order_log_repo,
             report_repo=_report_repo,
             settings=_settings,
-            event_bus=get_event_bus(),
+            event_bus=event_bus,
         )
 
         await _trading_service.recover_state()
@@ -97,6 +101,7 @@ async def close_dependencies() -> None:
     _trading_service = None
     _market_repo = None
     _order_repo = None
+    _order_log_repo = None
     _report_repo = None
     _settings = None
 
@@ -117,6 +122,12 @@ def get_order_repo() -> OrderRepository:
     if _order_repo is None:
         raise RuntimeError("Dependencies not initialized")
     return _order_repo
+
+
+def get_order_log_repo() -> OrderLogRepository:
+    if _order_log_repo is None:
+        raise RuntimeError("Dependencies not initialized")
+    return _order_log_repo
 
 
 def get_report_repo() -> ReportRepository:

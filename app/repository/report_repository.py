@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime, timedelta
 
 from app.core.database import Database
@@ -101,5 +102,57 @@ class ReportRepository:
         cutoff = (datetime.now() - timedelta(days=days)).isoformat()
         cursor = await self._db.execute(
             "DELETE FROM scan_logs WHERE scan_time < ?", (cutoff,),
+        )
+        return cursor.rowcount
+
+    # ── Bot Event 영속화 ──
+
+    _PERSIST_TYPES = {
+        "order_exec", "sell_eval", "buy_eval",
+        "pre_market", "post_market", "state_change", "error",
+        "scan_end",
+    }
+
+    async def save_bot_event(
+        self, event_type: str, message: str,
+        timestamp: float, data: dict | None = None,
+    ) -> None:
+        if event_type not in self._PERSIST_TYPES:
+            return
+        if event_type == "buy_eval" and data:
+            action = data.get("action")
+            if action not in ("매수검토", None):
+                return
+        await self._db.execute(
+            """INSERT INTO bot_events
+               (event_type, message, timestamp, data, created_at)
+               VALUES (?, ?, ?, ?, ?)""",
+            (event_type, message, timestamp,
+             json.dumps(data, ensure_ascii=False) if data else None,
+             datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        )
+
+    async def get_recent_bot_events(self, limit: int = 200) -> list[dict]:
+        rows = await self._db.fetch_all(
+            """SELECT event_type, message, timestamp, data
+               FROM bot_events
+               ORDER BY id DESC LIMIT ?""",
+            (limit,),
+        )
+        result = []
+        for row in reversed(rows):
+            d = row.get("data")
+            result.append({
+                "type": row["event_type"],
+                "message": row["message"],
+                "timestamp": row["timestamp"],
+                "data": json.loads(d) if d else None,
+            })
+        return result
+
+    async def cleanup_old_bot_events(self, days: int = 30) -> int:
+        cutoff = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+        cursor = await self._db.execute(
+            "DELETE FROM bot_events WHERE created_at < ?", (cutoff,),
         )
         return cursor.rowcount

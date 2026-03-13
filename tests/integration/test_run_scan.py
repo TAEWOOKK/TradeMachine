@@ -214,7 +214,7 @@ async def test_scan_full_cycle(mock_settings):
         mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
         await svc.run_scan()
 
-    order_repo.get_balance.assert_called_once()
+    assert order_repo.get_balance.call_count >= 1
     market_repo.get_current_price.assert_called()
     report_repo.save_scan_log.assert_called_once()
 

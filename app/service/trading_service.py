@@ -113,12 +113,26 @@ class TradingService:
             logger.warning("상태 복구 중 잔고 조회 실패 — 빈 상태로 시작")
             positions = None
 
-        for pos in (positions or []):
-            self._highest_prices[pos.stock_code] = pos.current_price
+        self._last_positions = positions or []
+        holding_codes = {p.stock_code for p in self._last_positions}
+
+        saved_states = await self._order_log.load_trailing_states()
+        db_highest: dict[str, int] = {}
+        for st in saved_states:
+            code = st["stock_code"]
+            if code in holding_codes:
+                db_highest[code] = st["highest_price"]
+                if st["activated"]:
+                    self._trailing_activated.add(code)
+
+        for pos in self._last_positions:
+            current = pos.current_price
+            saved = db_highest.get(pos.stock_code, 0)
+            self._highest_prices[pos.stock_code] = max(current, saved)
             if pos.profit_rate >= self._settings.trailing_stop_activate:
                 self._trailing_activated.add(pos.stock_code)
 
-        self._last_positions = positions or []
+        await self._order_log.cleanup_trailing_states(holding_codes)
 
         try:
             self._last_account_summary = await self._order.get_account_summary()
@@ -126,10 +140,18 @@ class TradingService:
             logger.warning("상태 복구 중 계좌 요약 조회 실패")
         self._phase = "IDLE"
 
+        trailing_info = ""
+        if self._trailing_activated:
+            codes = ", ".join(
+                f"{stock_fmt(c)}(고점:{self._highest_prices.get(c, 0):,}원)"
+                for c in self._trailing_activated
+            )
+            trailing_info = f" | 트레일링 활성: {codes}"
+
         holding = len(self._last_positions)
         if holding > 0:
             names = ", ".join(stock_fmt(p.stock_code) for p in self._last_positions)
-            msg = f"상태 복구 완료! 보유 {holding}종목: {names}"
+            msg = f"상태 복구 완료! 보유 {holding}종목: {names}{trailing_info}"
         else:
             msg = "상태 복구 완료! 현재 보유 종목이 없습니다."
         if self._daily_buy_count > 0:
@@ -216,6 +238,16 @@ class TradingService:
                     logger.exception("매도 판단 중 오류: %s", pos.stock_code)
                     error_count += 1
 
+            if sell_count > 0:
+                refreshed = await self._order.get_balance()
+                if refreshed is not None:
+                    positions = refreshed
+                    self._last_positions = positions
+                try:
+                    self._last_account_summary = await self._order.get_account_summary()
+                except Exception:
+                    pass
+
             # ── 매수 평가 ──
             if buy_allowed:
                 holding_codes = {p.stock_code for p in positions}
@@ -242,6 +274,16 @@ class TradingService:
                     except Exception:
                         logger.exception("매수 판단 중 오류: %s", code)
                         error_count += 1
+
+            if buy_count > 0:
+                refreshed = await self._order.get_balance()
+                if refreshed is not None:
+                    positions = refreshed
+                    self._last_positions = positions
+                try:
+                    self._last_account_summary = await self._order.get_account_summary()
+                except Exception:
+                    pass
 
             self._consecutive_failures = 0
 
@@ -355,10 +397,18 @@ class TradingService:
             return "SOLD" if sold else "HOLD"
 
         # P2: 트레일링 스탑
-        self._highest_prices[code] = max(self._highest_prices.get(code, 0), cur)
+        prev_highest = self._highest_prices.get(code, 0)
+        new_highest = max(prev_highest, cur)
+        self._highest_prices[code] = new_highest
 
+        was_activated = code in self._trailing_activated
         if real_profit >= self._settings.trailing_stop_activate:
             self._trailing_activated.add(code)
+
+        if new_highest != prev_highest or (not was_activated and code in self._trailing_activated):
+            await self._order_log.save_trailing_state(
+                code, new_highest, code in self._trailing_activated,
+            )
 
         if code in self._trailing_activated:
             highest = self._highest_prices[code]
@@ -366,7 +416,7 @@ class TradingService:
             if cur <= threshold:
                 sold = await self._execute_sell(pos, OrderReason.TRAILING_STOP, cur)
                 if sold:
-                    self._cleanup_trailing(code)
+                    await self._cleanup_trailing(code)
                 emoji = "📉" if sold else "❌"
                 self._emit(EventType.SELL_EVAL,
                     f"{emoji} {name} — 고점({highest:,}원) 대비 하락해서 "
@@ -385,7 +435,7 @@ class TradingService:
             if biz_days > self._settings.max_holding_days:
                 sold = await self._execute_sell(pos, OrderReason.MAX_HOLDING, cur)
                 if sold:
-                    self._cleanup_trailing(code)
+                    await self._cleanup_trailing(code)
                 emoji = "📅" if sold else "❌"
                 self._emit(EventType.SELL_EVAL,
                     f"{emoji} {name} — {biz_days}일째 보유 중 (한도: {self._settings.max_holding_days}일). "
@@ -398,7 +448,7 @@ class TradingService:
         if await self._check_dead_cross(pos.stock_code):
             sold = await self._execute_sell(pos, OrderReason.DEAD_CROSS, cur)
             if sold:
-                self._cleanup_trailing(code)
+                await self._cleanup_trailing(code)
             emoji = "📉" if sold else "❌"
             self._emit(EventType.SELL_EVAL,
                 f"{emoji} {name} — 하락 신호(데드크로스) 감지. "
@@ -758,9 +808,10 @@ class TradingService:
             return False
         return cross_volume >= avg_volume * self._settings.volume_confirm_ratio
 
-    def _cleanup_trailing(self, code: str) -> None:
+    async def _cleanup_trailing(self, code: str) -> None:
         self._highest_prices.pop(code, None)
         self._trailing_activated.discard(code)
+        await self._order_log.delete_trailing_state(code)
 
     @staticmethod
     def _market_elapsed_ratio() -> float:
@@ -839,6 +890,7 @@ class TradingService:
                 if code in holding_codes
             }
             self._trailing_activated &= holding_codes
+            await self._order_log.cleanup_trailing_states(holding_codes)
             await self._cleanup_unfilled_orders()
 
             try:
@@ -947,6 +999,9 @@ class TradingService:
             deleted = await self._report.cleanup_old_scan_logs(days=90)
             if deleted:
                 logger.info("90일 이전 스캔 로그 %d건 정리 완료", deleted)
+            evt_deleted = await self._report.cleanup_old_bot_events(days=30)
+            if evt_deleted:
+                logger.info("30일 이전 이벤트 로그 %d건 정리 완료", evt_deleted)
 
             self._phase = "IDLE"
         except Exception:
