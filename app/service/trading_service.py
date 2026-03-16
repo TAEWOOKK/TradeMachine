@@ -99,9 +99,65 @@ class TradingService:
     def positions(self) -> list[Position]:
         return self._last_positions
 
+    async def _backfill_missing_reports(self) -> None:
+        today = datetime.now().strftime("%Y-%m-%d")
+        last_report = await self._report.get_yesterday_report(
+            "9999-12-31",
+        )
+        if not last_report:
+            return
+
+        last_date = datetime.strptime(last_report["report_date"], "%Y-%m-%d").date()
+        today_date = datetime.strptime(today, "%Y-%m-%d").date()
+        gap_days = (today_date - last_date).days
+
+        if gap_days <= 1:
+            return
+
+        logger.info("빠진 일일 리포트 %d일 감지 — 보정 시작 (%s ~ %s)", gap_days - 1, last_date, today_date)
+        prev = last_report
+
+        for offset in range(1, gap_days):
+            fill_date = (last_date + timedelta(days=offset)).strftime("%Y-%m-%d")
+            existing = await self._report.get_yesterday_report(
+                (last_date + timedelta(days=offset + 1)).strftime("%Y-%m-%d"),
+            )
+            if existing and existing["report_date"] == fill_date:
+                prev = existing
+                continue
+
+            realized = await self._order_log.get_today_realized_pnl(fill_date)
+            counts = await self._order_log.get_today_counts(fill_date)
+            prev_assets = prev.get("total_assets", 0)
+            prev_cumulative = prev.get("cumulative_pnl", 0)
+            daily_pnl = realized["total_pnl"]
+
+            await self._report.save_daily_report(
+                report_date=fill_date,
+                buy_count=counts["buy_count"],
+                sell_count=counts["sell_count"],
+                unfilled=counts["fail_count"],
+                holding_count=0,
+                eval_amount=0,
+                eval_profit=0,
+                profit_rate=0.0,
+                total_cash=prev_assets + daily_pnl,
+                total_assets=prev_assets + daily_pnl,
+                deposit_withdrawal=0,
+                cumulative_pnl=prev_cumulative + daily_pnl,
+            )
+            prev = {
+                "total_assets": prev_assets + daily_pnl,
+                "total_cash": prev_assets + daily_pnl,
+                "cumulative_pnl": prev_cumulative + daily_pnl,
+            }
+            logger.info("리포트 보정 완료: %s (실현손익: %d원)", fill_date, daily_pnl)
+
     async def recover_state(self) -> None:
         self._phase = "RECOVERING"
         self._emit(EventType.STATE_CHANGE, "서버를 재시작했어요. 이전 상태를 복구하는 중...")
+
+        await self._backfill_missing_reports()
 
         today = datetime.now().strftime("%Y-%m-%d")
         counts = await self._order_log.get_today_counts(today)
@@ -220,10 +276,11 @@ class TradingService:
                 return
 
             self._last_positions = positions
-            try:
-                self._last_account_summary = await self._order.get_account_summary()
-            except Exception:
-                pass
+            if self._last_account_summary is None or len(positions) > 0:
+                try:
+                    self._last_account_summary = await self._order.get_account_summary()
+                except Exception:
+                    pass
             unfilled_codes = await self._cleanup_unfilled_orders()
 
             # ── 매도 평가 ──
@@ -234,9 +291,13 @@ class TradingService:
                         sell_count += 1
                     elif result == "SKIP":
                         skip_count += 1
-                except Exception:
+                except Exception as exc:
                     logger.exception("매도 판단 중 오류: %s", pos.stock_code)
                     error_count += 1
+                    name = stock_fmt(pos.stock_code)
+                    self._emit(EventType.ERROR,
+                        f"❌ {name} 매도 판단 중 오류 — {type(exc).__name__}: {exc}",
+                        self._stock_data(pos.stock_code))
 
             if sell_count > 0:
                 refreshed = await self._order.get_balance()
@@ -271,9 +332,13 @@ class TradingService:
                             holding_codes.add(code)
                         elif result == "SKIP":
                             skip_count += 1
-                    except Exception:
+                    except Exception as exc:
                         logger.exception("매수 판단 중 오류: %s", code)
                         error_count += 1
+                        name = stock_fmt(code)
+                        self._emit(EventType.ERROR,
+                            f"❌ {name} 매수 판단 중 오류 — {type(exc).__name__}: {exc}",
+                            self._stock_data(code))
 
             if buy_count > 0:
                 refreshed = await self._order.get_balance()
@@ -596,10 +661,11 @@ class TradingService:
                 {**ma_data, "signal": "상승추세", "gap_pct": round(gap, 1), "action": "매수검토"})
         else:
             rel = ">" if ma5_now > ma20_now else "<"
+            gap_pct = round((ma5_now - ma20_now) / ma20_now * 100, 2) if ma20_now > 0 else 0
             self._emit(EventType.BUY_EVAL,
                 f"📊 {name} ({price_data.current_price:,}원) — 매수 조건 미충족 "
-                f"(MA5:{ma5_now:,.0f} {rel} MA20:{ma20_now:,.0f})",
-                {**ma_data, "skip": "MA조건미충족"})
+                f"(MA5:{ma5_now:,.0f} {rel} MA20:{ma20_now:,.0f}, 괴리율:{gap_pct:+.2f}%)",
+                {**ma_data, "skip": "MA조건미충족", "ma_gap_pct": gap_pct})
             return "SKIP"
 
         if rsi is not None:

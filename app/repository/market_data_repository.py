@@ -168,8 +168,8 @@ class MarketDataRepository:
             self._api_call_count += 1
             try:
                 resp = await self._client.get(path, headers=headers, params=params)
-            except httpx.TimeoutException:
-                logger.warning("API 타임아웃 (시도 %d/%d): %s", attempt + 1, C.MAX_API_RETRY, path)
+            except (httpx.TimeoutException, httpx.RemoteProtocolError, httpx.ReadError, httpx.ConnectError) as net_err:
+                logger.warning("API 네트워크 오류 (시도 %d/%d): %s — %s", attempt + 1, C.MAX_API_RETRY, path, net_err)
                 await asyncio.sleep(C.API_RETRY_DELAY_SECONDS * (attempt + 1))
                 continue
 
@@ -190,7 +190,14 @@ class MarketDataRepository:
             if data.get("rt_cd") == "0":
                 return data
 
-            logger.warning("API 오류 (시도 %d/%d): [%s] %s", attempt + 1, C.MAX_API_RETRY, msg_cd, data.get("msg1", ""))
-            await asyncio.sleep(C.API_RETRY_DELAY_SECONDS)
+            msg1 = data.get("msg1", "")
+            logger.warning("API 오류 (시도 %d/%d): [%s] %s", attempt + 1, C.MAX_API_RETRY, msg_cd, msg1)
+
+            if "초당" in msg1 or "거래건수" in msg1:
+                wait = C.API_RETRY_DELAY_SECONDS * (2 ** attempt)
+                logger.info("초당 한도 초과 → %ds 대기 후 재시도", wait)
+                await asyncio.sleep(wait)
+            else:
+                await asyncio.sleep(C.API_RETRY_DELAY_SECONDS)
 
         raise KisApiError("MAX_RETRY", f"API 호출 {C.MAX_API_RETRY}회 실패: {path}")

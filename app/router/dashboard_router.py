@@ -57,6 +57,10 @@ async def get_status(
     status["cumulative_pnl"] = prev_cumulative + realized["total_pnl"]
     status["initial_assets"] = yesterday.get("total_assets", 0) if yesterday else 0
 
+    if status.get("total_cash", 0) <= 0 and yesterday:
+        status["total_cash"] = yesterday.get("total_cash", 0)
+        status["total_assets"] = yesterday.get("total_assets", 0)
+
     return status
 
 
@@ -160,16 +164,21 @@ async def get_performance(
         total_assets = acct.get("total_assets", 0)
         total_cash = acct.get("total_cash", 0)
 
-        history.append({
-            "report_date": today,
-            "eval_amount": acct.get("stock_eval", 0),
-            "eval_profit": realized["total_pnl"],
-            "profit_rate": 0.0,
-            "total_cash": total_cash,
-            "total_assets": total_assets,
-            "deposit_withdrawal": 0,
-            "cumulative_pnl": prev_cumulative + realized["total_pnl"],
-        })
+        if total_assets <= 0 and yesterday:
+            total_assets = yesterday.get("total_assets", 0)
+            total_cash = yesterday.get("total_cash", 0)
+
+        if total_assets > 0:
+            history.append({
+                "report_date": today,
+                "eval_amount": acct.get("stock_eval", 0),
+                "eval_profit": realized["total_pnl"],
+                "profit_rate": 0.0,
+                "total_cash": total_cash,
+                "total_assets": total_assets,
+                "deposit_withdrawal": 0,
+                "cumulative_pnl": prev_cumulative + realized["total_pnl"],
+            })
 
     return {
         "history": history,
