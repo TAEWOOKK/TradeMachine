@@ -82,9 +82,11 @@ body{font-family:-apple-system,'Pretendard','Noto Sans KR',sans-serif;background
 /* log filter */
 .log-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
 .log-filters{display:flex;gap:4px;flex-wrap:wrap}
-.log-filter-btn{padding:4px 10px;border-radius:14px;font-size:11px;font-weight:600;border:1px solid var(--border);background:transparent;color:var(--text-dim);cursor:pointer;transition:all .15s}
+.log-filter-btn{padding:5px 14px;border-radius:14px;font-size:11px;font-weight:600;border:1px solid var(--border);background:transparent;color:var(--text-dim);cursor:pointer;transition:all .15s}
 .log-filter-btn:hover{border-color:var(--border-light);color:var(--text-sec)}
 .log-filter-btn.active{background:var(--blue-bg);border-color:var(--blue);color:var(--blue)}
+.log-filter-btn.active[data-filter="trade"]{background:rgba(251,146,60,.15);border-color:#fb923c;color:#fb923c}
+.log-filter-btn.active[data-filter="system"]{background:#64748b20;border-color:#94a3b8;color:#94a3b8}
 
 /* log */
 .log-container{background:var(--card);border:1px solid var(--border);border-radius:var(--radius-sm);max-height:500px;overflow-y:auto;scrollbar-width:thin;scrollbar-color:var(--border) transparent}
@@ -97,13 +99,9 @@ body{font-family:-apple-system,'Pretendard','Noto Sans KR',sans-serif;background
 .log-time{color:var(--text-dim);font-size:11px;font-variant-numeric:tabular-nums;white-space:nowrap;min-width:56px;padding-top:2px}
 .log-badge{flex-shrink:0;padding:2px 8px;border-radius:4px;font-size:10px;font-weight:700;letter-spacing:.3px;white-space:nowrap}
 .log-msg{flex:1;line-height:1.5;word-break:break-word}
+.badge-trade{background:rgba(251,146,60,.15);color:#fb923c}
 .badge-scan{background:var(--blue-bg);color:var(--blue)}
-.badge-buy{background:var(--green-bg);color:var(--green)}
-.badge-sell{background:var(--purple-bg);color:var(--purple)}
-.badge-order{background:var(--yellow-bg);color:var(--yellow)}
-.badge-market{background:var(--cyan-bg);color:var(--cyan)}
-.badge-error{background:var(--red-bg);color:var(--red)}
-.badge-state{background:#64748b20;color:#94a3b8}
+.badge-system{background:#64748b20;color:#94a3b8}
 
 /* skip group — collapsed by default */
 .log-item.skip-group{opacity:.65;font-size:12px;cursor:pointer}
@@ -159,6 +157,32 @@ body{font-family:-apple-system,'Pretendard','Noto Sans KR',sans-serif;background
 .error-item:last-child{border-bottom:none}
 .error-time{font-size:11px;color:var(--text-dim);margin-bottom:2px}
 .error-empty{padding:28px;text-align:center;color:var(--text-dim)}
+
+/* right-panel tabs */
+.right-tabs{display:flex;gap:0;border-bottom:2px solid var(--border);margin-bottom:10px}
+.right-tab{padding:8px 16px;font-size:13px;font-weight:600;color:var(--text-dim);cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-2px;transition:all .15s;user-select:none}
+.right-tab:hover{color:var(--text-sec)}
+.right-tab.active{color:var(--blue);border-bottom-color:var(--blue)}
+.right-tab .tab-badge{display:inline-flex;align-items:center;justify-content:center;min-width:18px;height:18px;padding:0 5px;border-radius:9px;font-size:10px;font-weight:700;margin-left:6px}
+.right-panel-body{display:none}
+.right-panel-body.active{display:block}
+
+/* trades */
+.trade-list{max-height:480px;overflow-y:auto;scrollbar-width:thin;scrollbar-color:var(--border) transparent}
+.trade-card{display:flex;align-items:flex-start;gap:10px;padding:12px 14px;border-bottom:1px solid var(--border)}
+.trade-card:last-child{border-bottom:none}
+.trade-badge{flex-shrink:0;padding:3px 8px;border-radius:6px;font-size:11px;font-weight:800;letter-spacing:.5px}
+.trade-badge.buy{background:rgba(6,182,212,.15);color:#06b6d4}
+.trade-badge.sell-plus{background:rgba(251,146,60,.15);color:#fb923c}
+.trade-badge.sell-minus{background:rgba(251,146,60,.15);color:#fb923c}
+.trade-body{flex:1;min-width:0}
+.trade-header{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}
+.trade-name{font-weight:700;font-size:13px;color:var(--text)}
+.trade-time{font-size:11px;color:var(--text-dim)}
+.trade-detail{font-size:12px;color:var(--text-sec);margin-top:3px;line-height:1.6}
+.trade-pnl{font-weight:700;margin-left:4px}
+.trade-reason{display:inline-block;margin-top:4px;padding:2px 8px;border-radius:4px;font-size:10px;font-weight:600;background:var(--surface);color:var(--text-dim);border:1px solid var(--border)}
+.trade-empty{padding:40px;text-align:center;color:var(--text-dim);font-size:13px}
 
 /* help */
 .help-panel{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);padding:14px 18px;margin-bottom:16px}
@@ -269,12 +293,9 @@ body{font-family:-apple-system,'Pretendard','Noto Sans KR',sans-serif;background
       <div class="section-title" style="margin-bottom:0"><span class="icon">📋</span> 실시간 활동 내역</div>
       <div class="log-filters">
         <button class="log-filter-btn active" data-filter="all">전체</button>
+        <button class="log-filter-btn" data-filter="trade">매매</button>
         <button class="log-filter-btn" data-filter="scan">분석</button>
-        <button class="log-filter-btn" data-filter="buy">매수</button>
-        <button class="log-filter-btn" data-filter="sell">매도</button>
-        <button class="log-filter-btn" data-filter="order">주문</button>
-        <button class="log-filter-btn" data-filter="market">장준비</button>
-        <button class="log-filter-btn" data-filter="error">오류</button>
+        <button class="log-filter-btn" data-filter="system">시스템</button>
       </div>
     </div>
     <div id="event-log" class="log-container">
@@ -282,9 +303,19 @@ body{font-family:-apple-system,'Pretendard','Noto Sans KR',sans-serif;background
     </div>
   </div>
   <div class="section">
-    <div class="section-title"><span class="icon">⚠️</span> 문제 알림</div>
-    <div id="error-panel" class="error-list">
-      <div class="error-empty">문제 없음 — 정상 운영 중 ✅</div>
+    <div class="right-tabs">
+      <div class="right-tab active" data-panel="trades" onclick="switchRightTab(this)">매매 내역 <span class="tab-badge" id="trade-count-badge" style="background:var(--blue-bg,rgba(59,130,246,.15));color:var(--blue)">0</span></div>
+      <div class="right-tab" data-panel="errors" onclick="switchRightTab(this)">⚠️ 문제 알림 <span class="tab-badge" id="error-count-badge" style="background:var(--red-bg);color:var(--red)">0</span></div>
+    </div>
+    <div id="panel-trades" class="right-panel-body active">
+      <div id="trade-list" class="trade-list">
+        <div class="trade-empty">아직 매매 내역이 없어요</div>
+      </div>
+    </div>
+    <div id="panel-errors" class="right-panel-body">
+      <div id="error-panel" class="error-list">
+        <div class="error-empty">문제 없음 — 정상 운영 중 ✅</div>
+      </div>
     </div>
   </div>
 </div>
@@ -353,6 +384,92 @@ function fmtTime(ts) {
 }
 function fmtNum(n) { return n!=null ? n.toLocaleString('ko-KR') : '-'; }
 function fmtWon(n) { return n!=null ? n.toLocaleString('ko-KR')+'원' : '-'; }
+
+const REASON_LABEL = {
+  GOLDEN_CROSS: '골든크로스 진입',
+  UPTREND_ENTRY: '상승추세 진입',
+  DEAD_CROSS: '데드크로스 이탈',
+  STOP_LOSS: '손절 (-5% 이하)',
+  TAKE_PROFIT: '익절 (목표 달성)',
+  TRAILING_STOP: '트레일링 스탑 (고점 대비 하락)',
+  MAX_HOLDING: '최대 보유 기간 초과',
+};
+
+function switchRightTab(el) {
+  document.querySelectorAll('.right-tab').forEach(t=>t.classList.remove('active'));
+  document.querySelectorAll('.right-panel-body').forEach(p=>p.classList.remove('active'));
+  el.classList.add('active');
+  const panelId = 'panel-' + el.dataset.panel;
+  const panel = document.getElementById(panelId);
+  if(panel) panel.classList.add('active');
+}
+
+function renderTradeCard(t) {
+  const isBuy = t.order_type === 'BUY';
+  const name = t.stock_name || t.stock_code;
+  const total = t.quantity * t.price;
+
+  let badgeCls, badgeText;
+  if (isBuy) {
+    badgeCls = 'buy'; badgeText = '매수';
+  } else {
+    badgeCls = (t.pnl >= 0) ? 'sell-plus' : 'sell-minus';
+    badgeText = '매도';
+  }
+
+  const ts = t.created_at || '';
+  const timeParts = ts.split(' ');
+  let timeDisplay = ts;
+  if (timeParts.length === 2) {
+    const datePart = timeParts[0];
+    const hm = timeParts[1].substring(0, 5);
+    const today = new Date().toISOString().slice(0, 10);
+    timeDisplay = (datePart === today) ? hm : datePart.slice(5).replace('-','/') + ' ' + hm;
+  }
+
+  let detailHtml;
+  if (isBuy) {
+    detailHtml = `${fmtNum(t.quantity)}주 × ${fmtWon(t.price)} = <b>${fmtWon(total)}</b>`;
+  } else {
+    const pnlColor = t.pnl >= 0 ? 'var(--red)' : 'var(--blue)';
+    const pnlSign = t.pnl >= 0 ? '+' : '';
+    detailHtml = `${fmtNum(t.quantity)}주 × ${fmtWon(t.price)} = <b>${fmtWon(total)}</b>`
+      + `<span class="trade-pnl" style="color:${pnlColor}">${pnlSign}${fmtWon(t.pnl)} (${pnlSign}${t.pnl_rate}%)</span>`;
+  }
+
+  const reasonText = REASON_LABEL[t.order_reason] || t.order_reason;
+
+  return `<div class="trade-card">
+    <span class="trade-badge ${badgeCls}">${badgeText}</span>
+    <div class="trade-body">
+      <div class="trade-header">
+        <span class="trade-name">${name}</span>
+        <span class="trade-time">${timeDisplay}</span>
+      </div>
+      <div class="trade-detail">${detailHtml}</div>
+      <span class="trade-reason">${reasonText}</span>
+    </div>
+  </div>`;
+}
+
+function renderTradeList(trades) {
+  const container = document.getElementById('trade-list');
+  const badge = document.getElementById('trade-count-badge');
+  if (!trades || trades.length === 0) {
+    container.innerHTML = '<div class="trade-empty">아직 매매 내역이 없어요</div>';
+    badge.textContent = '0';
+    return;
+  }
+  badge.textContent = trades.length;
+  container.innerHTML = trades.map(renderTradeCard).join('');
+}
+
+async function loadTrades() {
+  try {
+    const res = await fetch('/api/trades');
+    if (res.ok) renderTradeList(await res.json());
+  } catch(e) { /* ignore */ }
+}
 
 const PHASE_INFO = {
   IDLE:           {icon:'😴',label:'대기 중',desc:'다음 분석 시간을 기다리고 있어요'},
@@ -464,20 +581,16 @@ function updatePositions(positions) {
 }
 
 function getFilterGroup(type){
+  if(type==='buy_eval'||type==='sell_eval'||type==='order_exec') return 'trade';
   if(type.includes('scan')) return 'scan';
-  if(type==='buy_eval') return 'buy';
-  if(type==='sell_eval') return 'sell';
-  if(type==='order_exec') return 'order';
-  if(type==='pre_market'||type==='post_market') return 'market';
-  if(type==='error') return 'error';
-  return 'state';
+  return 'system';
 }
 function getBadgeClass(type){
   const g=getFilterGroup(type);
-  return {scan:'badge-scan',buy:'badge-buy',sell:'badge-sell',order:'badge-order',market:'badge-market',error:'badge-error'}[g]||'badge-state';
+  return {trade:'badge-trade',scan:'badge-scan',system:'badge-system'}[g]||'badge-system';
 }
 function getBadgeLabel(type){
-  return {scan_start:'분석',scan_end:'완료',buy_eval:'매수판단',sell_eval:'매도판단',order_exec:'주문',pre_market:'장준비',post_market:'장마감',error:'오류',state_change:'상태'}[type]||type;
+  return {scan_start:'분석',scan_end:'완료',buy_eval:'매수',sell_eval:'매도',order_exec:'체결',pre_market:'장준비',post_market:'장마감',error:'오류',state_change:'상태'}[type]||type;
 }
 
 function buildDetailHtml(d){
@@ -736,7 +849,13 @@ function toggleDetail(el){
 function renderErrors(){
   fetch('/api/events/errors').then(r=>r.json()).then(errors=>{
     const el=$('error-panel');
-    if(!errors.length){el.innerHTML='<div class="error-empty">문제 없음 — 정상 운영 중 ✅</div>';return;}
+    const badge=$('error-count-badge');
+    if(!errors.length){
+      el.innerHTML='<div class="error-empty">문제 없음 — 정상 운영 중 ✅</div>';
+      badge.textContent='0';
+      return;
+    }
+    badge.textContent=errors.length;
     el.innerHTML=errors.slice(-15).reverse().map(e=>
       `<div class="error-item"><div class="error-time">${fmtTime(e.timestamp)}</div>${e.message}</div>`
     ).join('');
@@ -761,6 +880,7 @@ function connectSSE(){
     if(data.type==='connected') return;
     addEvent(data);
     if(['scan_end','order_exec','state_change','pre_market','post_market'].includes(data.type)) refreshAll();
+    if(data.type==='order_exec') loadTrades();
   };
   sse.onerror=()=>{
     sseConnected=false;
@@ -789,6 +909,7 @@ async function loadHistory(){
     if(events.length>MAX_EVENTS) events.splice(MAX_EVENTS);
     renderEvents();
     renderErrors();
+    loadTrades();
   }catch(e){}
 }
 

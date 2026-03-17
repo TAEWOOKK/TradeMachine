@@ -137,6 +137,56 @@ class OrderLogRepository:
             })
         return {"total_pnl": total_pnl, "trades": trades}
 
+    async def get_recent_orders(self, limit: int = 50) -> list[dict]:
+        """최근 매매 내역(성공 건만) 반환."""
+        rows = await self._db.fetch_all(
+            """
+            SELECT id, created_at, stock_code, order_type, order_reason,
+                   quantity, price
+            FROM orders
+            WHERE success = 1
+            ORDER BY created_at DESC
+            LIMIT ?
+            """,
+            (limit,),
+        )
+        result: list[dict] = []
+        for r in rows:
+            entry: dict = {
+                "id": r["id"],
+                "created_at": r["created_at"],
+                "stock_code": r["stock_code"],
+                "order_type": r["order_type"],
+                "order_reason": r["order_reason"],
+                "quantity": r["quantity"],
+                "price": r["price"],
+                "total": r["quantity"] * r["price"],
+            }
+            if r["order_type"] == "SELL":
+                buy_row = await self._db.fetch_one(
+                    """
+                    SELECT AVG(price) AS avg_buy_price
+                    FROM orders
+                    WHERE stock_code = ? AND order_type = 'BUY' AND success = 1
+                      AND created_at > COALESCE(
+                          (SELECT MAX(ps.created_at) FROM orders ps
+                           WHERE ps.stock_code = ?
+                             AND ps.order_type = 'SELL' AND ps.success = 1
+                             AND ps.created_at < ?),
+                          '0000-00-00'
+                      )
+                    """,
+                    (r["stock_code"], r["stock_code"], r["created_at"]),
+                )
+                avg_buy = int(buy_row["avg_buy_price"]) if buy_row and buy_row["avg_buy_price"] else r["price"]
+                pnl = int((r["price"] - avg_buy) * r["quantity"])
+                pnl_rate = round((r["price"] - avg_buy) / avg_buy * 100, 2) if avg_buy > 0 else 0
+                entry["avg_buy_price"] = avg_buy
+                entry["pnl"] = pnl
+                entry["pnl_rate"] = pnl_rate
+            result.append(entry)
+        return result
+
     # ── Trailing State 영속화 ──
 
     async def save_trailing_state(

@@ -186,6 +186,16 @@ async def get_performance(
     }
 
 
+@router.get("/api/trades")
+async def get_trades(
+    order_log_repo: OrderLogRepository = Depends(get_order_log_repo),
+) -> list[dict]:
+    trades = await order_log_repo.get_recent_orders(limit=50)
+    for t in trades:
+        t["stock_name"] = get_name(t["stock_code"])
+    return trades
+
+
 @router.get("/api/events/stream")
 async def event_stream() -> StreamingResponse:
     bus = get_event_bus()
