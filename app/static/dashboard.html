@@ -234,7 +234,7 @@ body{font-family:-apple-system,'Pretendard','Noto Sans KR',sans-serif;background
     </div>
   </div>
   <div class="countdown-box">
-    <div class="countdown-label">다음 분석까지</div>
+    <div class="countdown-label" id="countdown-label">다음 분석까지</div>
     <div class="countdown-value" id="countdown">--:--</div>
     <div class="countdown-next" id="countdown-next"></div>
   </div>
@@ -330,6 +330,8 @@ body{font-family:-apple-system,'Pretendard','Noto Sans KR',sans-serif;background
     <div class="help-item"><span class="hi">익절</span> 수익 +15% 이상이면 목표 달성으로 매도</div>
     <div class="help-item"><span class="hi">트레일링 스탑</span> 고점 대비 4% 하락 시 자동 매도 (수익 보호)</div>
     <div class="help-item"><span class="hi">RSI</span> 과열(70↑)/과냉(30↓) 지표. 적정 구간만 매수</div>
+    <div class="help-item"><span class="hi">RSI 반등</span> RSI 30 이하에서 반등 시 매수 (과매도 회복)</div>
+    <div class="help-item"><span class="hi">볼린저 밴드</span> 하단 밴드 터치 후 반등 시 매수 (평균 회귀)</div>
     <div class="help-item"><span class="hi">MA5/MA20</span> 5일/20일 이동평균. 교차로 추세 판단</div>
     <div class="help-item"><span class="hi">시장 필터</span> KOSPI 하락세면 신규 매수 중단</div>
   </div>
@@ -388,6 +390,8 @@ function fmtWon(n) { return n!=null ? n.toLocaleString('ko-KR')+'원' : '-'; }
 const REASON_LABEL = {
   GOLDEN_CROSS: '골든크로스 진입',
   UPTREND_ENTRY: '상승추세 진입',
+  RSI_REVERSAL: 'RSI 반등 (과매도 회복)',
+  BB_BOUNCE: '볼린저 밴드 반등',
   DEAD_CROSS: '데드크로스 이탈',
   STOP_LOSS: '손절 (-5% 이하)',
   TAKE_PROFIT: '익절 (목표 달성)',
@@ -471,19 +475,40 @@ async function loadTrades() {
   } catch(e) { /* ignore */ }
 }
 
-const PHASE_INFO = {
-  IDLE:           {icon:'😴',label:'대기 중',desc:'다음 분석 시간을 기다리고 있어요'},
+const PHASE_MAP = {
   SCANNING:       {icon:'🔍',label:'종목 분석 중',desc:'감시 목록의 종목들을 분석하고 있어요'},
   PRE_MARKET:     {icon:'🌅',label:'장 시작 준비',desc:'토큰 갱신, 잔고 확인, 미체결 정리 중'},
-  POST_MARKET:    {icon:'🌙',label:'장 마감 정산',desc:'오늘 거래를 정리하고 보고서 작성 중'},
+  POST_MARKET:    {icon:'🌙',label:'장 마감 정산 중',desc:'오늘 거래를 정리하고 보고서 작성 중'},
   RECOVERING:     {icon:'🔄',label:'상태 복구 중',desc:'서버 재시작 후 이전 상태를 복구 중'},
-  WAITING_MARKET: {icon:'⏰',label:'장 시작 대기',desc:'9시 5분에 분석을 시작합니다'},
-  MARKET_CLOSED:  {icon:'🏠',label:'장 마감',desc:'오늘 거래 종료. 내일 다시 시작합니다'},
+  WAITING_MARKET: {icon:'⏰',label:'장 시작 대기',desc:'09:05에 첫 분석을 시작합니다'},
+  MARKET_CLOSED:  {icon:'🏠',label:'장 마감',desc:'오늘 거래가 종료되었습니다. 내일 09:05에 다시 시작합니다'},
+  HOLIDAY:        {icon:'📅',label:'휴장일',desc:'오늘은 거래가 없는 날입니다'},
   FAILURE_SKIP:   {icon:'⚠️',label:'일시 중단',desc:'API 오류 반복으로 분석 일시 중지'},
 };
 
+function resolvePhase(s) {
+  if (PHASE_MAP[s.phase]) return PHASE_MAP[s.phase];
+
+  const wc = (s.watch_list||[]).length;
+  const t = s.server_time || '';
+  const hm = t.slice(11,16);
+  const h = parseInt(hm.slice(0,2),10);
+  const m = parseInt(hm.slice(3,5),10);
+  const mins = h*60+m;
+
+  if (mins >= 545 && mins <= 920) {
+    const next5 = Math.ceil(mins/5)*5;
+    const remain = next5 - mins;
+    return {icon:'📊',label:'장중 대기',desc:`다음 분석까지 약 ${remain>0?remain:5}분 · 종목 ${wc}개 감시 중`};
+  }
+  if (mins > 920 && mins <= 930) {
+    return {icon:'🏁',label:'장 마감 임박',desc:'15:30에 장이 마감됩니다'};
+  }
+  return {icon:'😴',label:'대기 중',desc:'서버가 실행 중입니다'};
+}
+
 function updateStatus(s) {
-  const info = PHASE_INFO[s.phase]||{icon:'🤖',label:s.phase,desc:''};
+  const info = resolvePhase(s);
   $('status-icon').textContent = info.icon;
   $('status-phase').textContent = info.label;
   $('status-desc').textContent = info.desc;
@@ -521,16 +546,22 @@ function updateStatus(s) {
 }
 
 function updateCountdown(){
+  const cdLabel = $('countdown-label');
+  const cdValue = $('countdown');
+  const cdNext = $('countdown-next');
   if(countdownSeconds < 0){
-    $('countdown').textContent = '--:--';
-    $('countdown-next').textContent = '장외 시간';
+    cdLabel.textContent = '다음 분석';
+    cdValue.textContent = '--:--';
+    cdValue.style.color = 'var(--text-dim)';
+    cdNext.textContent = lastInMarket ? '' : '장외 시간';
     return;
   }
+  cdLabel.textContent = '다음 분석까지';
   const m = Math.floor(countdownSeconds/60);
   const sec = countdownSeconds%60;
-  $('countdown').textContent = String(m).padStart(2,'0')+':'+String(sec).padStart(2,'0');
-  $('countdown-next').textContent = nextScanTime ? nextScanTime+' 예정' : '';
-  $('countdown').style.color = countdownSeconds<=30?'var(--green)':'var(--blue)';
+  cdValue.textContent = String(m).padStart(2,'0')+':'+String(sec).padStart(2,'0');
+  cdNext.textContent = nextScanTime ? nextScanTime+' 예정' : '';
+  cdValue.style.color = countdownSeconds<=30?'var(--green)':'var(--blue)';
 }
 
 setInterval(()=>{
@@ -801,8 +832,8 @@ function renderSingleEvent(e){
   const cls=isOrderHit(e)?'order-hit':isHitEval(e)?'hit-eval':'';
   const detail=buildDetailHtml(e.data);
   const hasDetail=!!detail;
-  const arrow=hasDetail?`<span class="log-arrow">${hit?'▼':'▶'}</span>`:'';
-  const expanded=hit&&hasDetail?' expanded':'';
+  const arrow=hasDetail?`<span class="log-arrow">▶</span>`:'';
+  const expanded='';
   return `<div class="log-item ${cls}${expanded}">
     <div class="log-row" ${hasDetail?'onclick="toggleDetail(this.parentElement)"':''}>
       <span class="log-time">${fmtTime(e.timestamp)}</span>
@@ -892,13 +923,12 @@ function connectSSE(){
 
 async function refreshAll(){
   try{
-    const [status,scan,positions]=await Promise.all([
-      fetch('/api/status').then(r=>r.json()),
-      fetch('/api/last-scan').then(r=>r.json()),
-      fetch('/api/positions').then(r=>r.json()),
+    const [status,positions]=await Promise.all([
+      fetch('/api/status').then(r=>r.ok?r.json():null).catch(()=>null),
+      fetch('/api/positions').then(r=>r.ok?r.json():null).catch(()=>null),
     ]);
-    updateStatus(status);
-    updatePositions(positions);
+    if(status) updateStatus(status);
+    if(positions) updatePositions(positions);
   }catch(e){console.error('refresh failed',e);}
 }
 

@@ -233,10 +233,10 @@ class TradingService:
         try:
             now = datetime.now()
             if now.weekday() >= 5:
-                self._phase = "IDLE"
+                self._phase = "HOLIDAY"
                 return
             if now.strftime("%Y%m%d") in C.KRX_HOLIDAYS:
-                self._phase = "IDLE"
+                self._phase = "HOLIDAY"
                 return
 
             if self._consecutive_failures >= C.MAX_CONSECUTIVE_FAILURES:
@@ -319,6 +319,15 @@ class TradingService:
                     self._emit(EventType.BUY_EVAL,
                         "📉 시장 전체가 하락 추세라서 오늘은 새로운 매수를 하지 않습니다 (KOSPI < 20일 평균)")
 
+                if buy_allowed and self._daily_buy_count >= self._settings.max_daily_buy_count:
+                    self._emit(EventType.BUY_EVAL,
+                        f"⏸️ 오늘 매수 횟수({self._settings.max_daily_buy_count}회)를 모두 사용했어요")
+                    buy_allowed = False
+                if buy_allowed and current_holding >= self._settings.max_holding_count:
+                    self._emit(EventType.BUY_EVAL,
+                        f"⏸️ 최대 보유 종목 수({self._settings.max_holding_count}개)에 도달했어요")
+                    buy_allowed = False
+
                 for code in self._settings.watch_list_codes:
                     try:
                         result = await self._evaluate_buy(
@@ -361,7 +370,8 @@ class TradingService:
 
         finally:
             self._scan_running = False
-            self._phase = "IDLE"
+            if self._phase == "SCANNING":
+                self._phase = "IDLE"
 
         elapsed = int((time_mod.time() - start) * 1000)
         scan_result = ScanResult(
@@ -557,8 +567,6 @@ class TradingService:
         if current_holding_count >= self._settings.max_holding_count:
             return "SKIP"
         if self._daily_buy_count >= self._settings.max_daily_buy_count:
-            self._emit(EventType.BUY_EVAL,
-                f"⏸️ 오늘 매수 횟수({self._settings.max_daily_buy_count}회)를 모두 사용했어요")
             return "SKIP"
         if not market_ok:
             return "SKIP"
@@ -659,6 +667,20 @@ class TradingService:
                 f"📈 {name} — 안정적 상승추세 확인! 매수 검토 중 "
                 f"(MA5:{ma5_now:,.0f} > MA20:{ma20_now:,.0f}, 괴리율:{gap:.1f}%)",
                 {**ma_data, "signal": "상승추세", "gap_pct": round(gap, 1), "action": "매수검토"})
+        elif self._check_rsi_reversal(candles, price_data.current_price, ma_result):
+            buy_reason = OrderReason.RSI_REVERSAL
+            self._emit(EventType.BUY_EVAL,
+                f"🔄 {name} — RSI 반등 감지! 과매도에서 회복 중, 매수 검토 "
+                f"(RSI:{rsi:.0f}, 현재가:{price_data.current_price:,}원)",
+                {**ma_data, "signal": "RSI반등", "action": "매수검토"})
+        elif self._check_bollinger_bounce(candles, price_data.current_price, ma_result):
+            buy_reason = OrderReason.BB_BOUNCE
+            bb = self._calculate_bollinger(candles)
+            bb_lower = int(bb[2]) if bb else 0
+            self._emit(EventType.BUY_EVAL,
+                f"📉↗ {name} — 볼린저 밴드 하단 반등! 매수 검토 "
+                f"(하단:{bb_lower:,}원, 현재가:{price_data.current_price:,}원, RSI:{rsi:.0f})",
+                {**ma_data, "signal": "BB반등", "bb_lower": bb_lower, "action": "매수검토"})
         else:
             rel = ">" if ma5_now > ma20_now else "<"
             gap_pct = round((ma5_now - ma20_now) / ma20_now * 100, 2) if ma20_now > 0 else 0
@@ -668,17 +690,18 @@ class TradingService:
                 {**ma_data, "skip": "MA조건미충족", "ma_gap_pct": gap_pct})
             return "SKIP"
 
-        if rsi is not None:
-            if rsi > self._settings.rsi_overbought:
-                self._emit(EventType.BUY_EVAL,
-                    f"🔥 {name} — 과열 상태(RSI {rsi:.0f})라 지금 사면 고점 매수 위험이 있어 보류합니다",
-                    {**ma_data, "signal": "RSI과매수", "skip": "RSI과열"})
-                return "SKIP"
-            if rsi < self._settings.rsi_oversold:
-                self._emit(EventType.BUY_EVAL,
-                    f"❄️ {name} — 너무 많이 떨어진 상태(RSI {rsi:.0f})라 하락 추세일 수 있어 보류합니다",
-                    {**ma_data, "signal": "RSI과매도", "skip": "RSI과냉"})
-                return "SKIP"
+        if buy_reason in (OrderReason.GOLDEN_CROSS, OrderReason.UPTREND_ENTRY):
+            if rsi is not None:
+                if rsi > self._settings.rsi_overbought:
+                    self._emit(EventType.BUY_EVAL,
+                        f"🔥 {name} — 과열 상태(RSI {rsi:.0f})라 지금 사면 고점 매수 위험이 있어 보류합니다",
+                        {**ma_data, "signal": "RSI과매수", "skip": "RSI과열"})
+                    return "SKIP"
+                if rsi < self._settings.rsi_oversold:
+                    self._emit(EventType.BUY_EVAL,
+                        f"❄️ {name} — 너무 많이 떨어진 상태(RSI {rsi:.0f})라 하락 추세일 수 있어 보류합니다",
+                        {**ma_data, "signal": "RSI과매도", "skip": "RSI과냉"})
+                    return "SKIP"
 
         available = await self._order.get_available_cash(stock_code)
         invest = int(available * self._settings.max_investment_ratio)
@@ -862,6 +885,100 @@ class TradingService:
         rs = avg_gain / avg_loss
         return 100 - (100 / (1 + rs))
 
+    def _calculate_rsi_series(self, candles: list[DailyCandle], length: int = 3) -> list[float]:
+        """최근 length일치 RSI를 반환 (index 0 = 오늘)."""
+        period = C.RSI_PERIOD
+        result: list[float] = []
+        for offset in range(length):
+            shifted = candles[offset:]
+            if len(shifted) < period + 1:
+                result.append(50.0)
+                continue
+            gains = [max(shifted[i].close - shifted[i + 1].close, 0) for i in range(period)]
+            losses = [max(shifted[i + 1].close - shifted[i].close, 0) for i in range(period)]
+            avg_gain = sum(gains) / period
+            avg_loss = sum(losses) / period
+            if avg_loss == 0:
+                result.append(100.0)
+            else:
+                rs = avg_gain / avg_loss
+                result.append(100 - (100 / (1 + rs)))
+        return result
+
+    def _calculate_bollinger(self, candles: list[DailyCandle], period: int = 20, num_std: float = 2.0) -> tuple[float, float, float] | None:
+        """볼린저 밴드 (middle, upper, lower) 반환."""
+        if len(candles) < period:
+            return None
+        closes = [c.close for c in candles[:period]]
+        middle = sum(closes) / period
+        variance = sum((c - middle) ** 2 for c in closes) / period
+        std = variance ** 0.5
+        return (middle, middle + num_std * std, middle - num_std * std)
+
+    def _check_rsi_reversal(self, candles: list[DailyCandle], current_price: int, ma: MaResult) -> bool:
+        """RSI 반등 매수: 과매도 → 반등 감지.
+
+        조건:
+        1. 최근 3일 내 RSI가 30 이하였다가 현재 30 이상으로 회복
+        2. 현재 RSI가 30~50 사이 (반등 초기, 아직 과열 아님)
+        3. MA20이 급락 중이 아님 (5일간 -3% 이내)
+        4. 현재가가 MA20의 90% 이상 (너무 멀리 떨어지지 않음)
+        """
+        rsi_series = self._calculate_rsi_series(candles, length=4)
+        if len(rsi_series) < 3:
+            return False
+
+        rsi_now = rsi_series[0]
+        was_oversold = any(r < 30 for r in rsi_series[1:4])
+
+        if not was_oversold:
+            return False
+        if rsi_now < 30 or rsi_now > 50:
+            return False
+
+        if len(ma.ma_long) < 6:
+            return False
+        ma20_slope = (ma.ma_long[0] - ma.ma_long[5]) / ma.ma_long[5] * 100
+        if ma20_slope < -3.0:
+            return False
+
+        if current_price < ma.ma_long[0] * 0.90:
+            return False
+
+        return True
+
+    def _check_bollinger_bounce(self, candles: list[DailyCandle], current_price: int, ma: MaResult) -> bool:
+        """볼린저 밴드 하단 반등 매수.
+
+        조건:
+        1. 최근 3일 내 종가가 하단 밴드 이하였음 (과매도 터치)
+        2. 현재가가 하단 밴드 위로 회복
+        3. RSI가 25~45 사이 (반등 초기)
+        4. MA20이 급락 중이 아님
+        """
+        bb = self._calculate_bollinger(candles)
+        if bb is None:
+            return None
+        middle, upper, lower = bb
+
+        touched_lower = any(candles[i].close <= lower for i in range(1, min(4, len(candles))))
+        if not touched_lower:
+            return False
+        if current_price <= lower:
+            return False
+
+        rsi = self._calculate_rsi(candles)
+        if rsi is None or rsi < 25 or rsi > 45:
+            return False
+
+        if len(ma.ma_long) < 6:
+            return False
+        ma20_slope = (ma.ma_long[0] - ma.ma_long[5]) / ma.ma_long[5] * 100
+        if ma20_slope < -3.0:
+            return False
+
+        return True
+
     def _check_volume_confirmation(self, candles: list[DailyCandle], cross_day_index: int) -> bool:
         if cross_day_index >= len(candles):
             return False
@@ -971,11 +1088,11 @@ class TradingService:
                 msg = "🌅 장 시작 준비 완료! 보유 종목 없음 — 새로운 매수 기회를 탐색합니다"
             trade_logger.info(msg)
             self._emit(EventType.PRE_MARKET, msg)
-            self._phase = "IDLE"
+            self._phase = "WAITING_MARKET"
         except Exception:
             logger.exception("run_pre_market 오류")
             self._emit(EventType.ERROR, "⚠️ 장 시작 준비 중 오류 발생")
-            self._phase = "IDLE"
+            self._phase = "WAITING_MARKET"
 
     # ── run_post_market ──
 
@@ -1013,8 +1130,8 @@ class TradingService:
                     deposit_withdrawal = 0
 
             prev_cumulative = yesterday.get("cumulative_pnl", 0) if yesterday else 0
-            daily_pnl = total_assets - (yesterday.get("total_assets", 0) if yesterday else total_assets) - deposit_withdrawal
-            cumulative_pnl = prev_cumulative + daily_pnl
+            realized = await self._order_log.get_today_realized_pnl(today)
+            cumulative_pnl = prev_cumulative + realized["total_pnl"]
 
             if deposit_withdrawal != 0:
                 dw_type = "입금" if deposit_withdrawal > 0 else "출금"
@@ -1069,11 +1186,11 @@ class TradingService:
             if evt_deleted:
                 logger.info("30일 이전 이벤트 로그 %d건 정리 완료", evt_deleted)
 
-            self._phase = "IDLE"
+            self._phase = "MARKET_CLOSED"
         except Exception:
             logger.exception("run_post_market 오류")
             self._emit(EventType.ERROR, "⚠️ 장 마감 처리 중 오류 발생")
-            self._phase = "IDLE"
+            self._phase = "MARKET_CLOSED"
 
     # ── _cleanup_unfilled_orders ──
 
