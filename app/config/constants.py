@@ -6,9 +6,11 @@ MA_LONG_PERIOD: int = 20
 RSI_PERIOD: int = 14
 
 # ── 매매 비용 (증권사·정부 제도) ──
+# 수수료: 한국투자증권 온라인 0.015%
+# 거래세: 2025년 코스피/코스닥 0.15% (농어촌특별세 포함)
 BUY_FEE_RATE: float = 0.00015
 SELL_FEE_RATE: float = 0.00015
-SELL_TAX_RATE: float = 0.0018
+SELL_TAX_RATE: float = 0.0015  # 0.15% (2025년 기준)
 SLIPPAGE_RATE: float = 0.0015
 
 # ── 종목 품질 필터 ──

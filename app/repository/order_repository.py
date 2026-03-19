@@ -205,8 +205,14 @@ class OrderRepository:
         summary = out2[0] if isinstance(out2, list) and out2 else out2
         total_assets = safe_int(summary.get("tot_evlu_amt", "0"))
         stock_eval = safe_int(summary.get("scts_evlu_amt", "0"))
+        total_cash = total_assets - stock_eval
+        if total_cash <= 0:
+            dnca = safe_int(summary.get("dnca_tot_amt", "0"))
+            if dnca > 0:
+                total_cash = dnca
+                logger.info("tot_evlu-scts=0 → dnca_tot_amt(예수금) %s원 사용", f"{dnca:,}")
         return {
-            "total_cash": total_assets - stock_eval,
+            "total_cash": total_cash,
             "stock_eval": stock_eval,
             "total_assets": total_assets,
         }

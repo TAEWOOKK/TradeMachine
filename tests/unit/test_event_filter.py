@@ -9,12 +9,12 @@ from __future__ import annotations
 
 
 def is_trade_filter_match(event: dict) -> bool:
-    """매매 필터: 체결·실제 매매 검토만. 분석(skip) 제외."""
+    """매매 필터: 체결·매수/매도 검토·보류(이유 포함) 모두 표시."""
     if event.get("type") == "order_exec":
         return True
     if event.get("type") in ("buy_eval", "sell_eval"):
         data = event.get("data") or {}
-        if data.get("action") and not data.get("skip"):
+        if data.get("action"):
             return True
     return False
 
@@ -52,6 +52,11 @@ class TestTradeFilter:
     def test_buy_eval_rsi_skip_excluded(self):
         e = {"type": "buy_eval", "data": {"skip": "RSI과열", "rsi": 75}}
         assert is_trade_filter_match(e) is False
+
+    def test_buy_eval_hold_included(self):
+        """매수보류(골든크로스 확인 후 RSI 등으로 보류)는 매매 탭에 표시."""
+        e = {"type": "buy_eval", "data": {"action": "매수보류", "skip": "RSI과열", "rsi": 75}}
+        assert is_trade_filter_match(e) is True
 
     def test_sell_eval_skip_excluded(self):
         e = {"type": "sell_eval", "data": {"skip": "보유유지"}}
@@ -101,7 +106,8 @@ class TestScanFilter:
 class TestFilterSeparation:
     """매매/분석 필터가 서로 겹치지 않도록 분리되는지 확인."""
 
-    def test_skip_events_only_in_scan(self):
+    def test_skip_only_events_in_scan(self):
+        """action 없는 skip 이벤트는 분석 탭에만 표시."""
         skip_events = [
             {"type": "buy_eval", "data": {"skip": "MA조건미충족"}},
             {"type": "buy_eval", "data": {"skip": "RSI과열"}},
@@ -110,6 +116,12 @@ class TestFilterSeparation:
         for e in skip_events:
             assert is_trade_filter_match(e) is False
             assert is_scan_filter_match(e) is True
+
+    def test_hold_events_in_both_filters(self):
+        """매수보류(action+skip)는 매매·분석 탭 모두에 표시 가능."""
+        e = {"type": "buy_eval", "data": {"action": "매수보류", "skip": "RSI과열", "rsi": 75}}
+        assert is_trade_filter_match(e) is True
+        assert is_scan_filter_match(e) is True
 
     def test_hit_events_only_in_trade(self):
         hit_events = [

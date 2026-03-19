@@ -12,6 +12,16 @@ class OrderRequest(BaseModel):
     price: int | None = Field(default=None, ge=0)
 
 
+class ManualSellRequest(BaseModel):
+    stock_code: str
+    quantity: int | None = Field(default=None, gt=0)
+
+
+class ManualBuyRequest(BaseModel):
+    stock_code: str
+    quantity: int = Field(gt=0)
+
+
 class OrderResponse(BaseModel):
     success: bool
     order_no: str | None

@@ -73,11 +73,55 @@ body{font-family:-apple-system,'Pretendard','Noto Sans KR',sans-serif;background
 .pos-name{font-size:15px;font-weight:700}
 .pos-code{font-size:11px;color:var(--text-dim)}
 .pos-detail{display:flex;gap:14px;font-size:12px;color:var(--text-sec);margin-top:3px}
-.pos-profit{text-align:right}
+.pos-profit{text-align:right;display:flex;flex-direction:column;align-items:flex-end;gap:4px}
 .pos-pct{font-size:20px;font-weight:800;font-variant-numeric:tabular-nums}
-.pos-amt{font-size:12px;margin-top:2px}
+.pos-amt{font-size:12px}
 .profit-up{color:var(--red)}.profit-down{color:var(--blue)}.profit-zero{color:var(--text-dim)}
 .pos-empty{background:var(--card);border:1px solid var(--border);border-radius:var(--radius-sm);padding:28px;text-align:center;color:var(--text-dim)}
+.pos-sell-btn{margin-top:4px}
+.pos-btn{padding:6px 12px;border-radius:6px;font-size:11px;font-weight:600;border:1px solid var(--border);background:transparent;color:var(--text-sec);cursor:pointer;transition:all .15s}
+.pos-btn:hover{background:var(--card-hover);border-color:var(--border-light);color:var(--text)}
+.pos-btn.sell{background:rgba(251,146,60,.1);border-color:#fb923c40;color:#fb923c}
+.pos-btn.sell:hover{background:rgba(251,146,60,.2);border-color:#fb923c}
+
+/* modal */
+.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;z-index:1000;opacity:0;visibility:hidden;transition:all .2s}
+.modal-overlay.show{opacity:1;visibility:visible}
+.modal{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:24px;max-width:400px;width:90%;max-height:90vh;overflow-y:auto}
+.modal-title{font-size:16px;font-weight:700;margin-bottom:16px;display:flex;align-items:center;gap:8px}
+.modal-row{display:flex;justify-content:space-between;align-items:center;padding:8px 0;font-size:13px;border-bottom:1px solid var(--border)}
+.modal-row:last-of-type{border-bottom:none}
+.modal-row .label{color:var(--text-dim)}
+.modal-row .value{font-weight:600}
+.modal-warn{background:var(--red-bg);border:1px solid var(--red);border-radius:var(--radius-sm);padding:14px;margin:16px 0;font-size:13px;color:var(--red)}
+.modal-warn-title{font-weight:700;margin-bottom:6px}
+.modal-btns{display:flex;gap:10px;justify-content:flex-end;margin-top:20px}
+.modal-btn{padding:10px 20px;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;transition:all .15s}
+.modal-btn.cancel{background:transparent;border:1px solid var(--border);color:var(--text-sec)}
+.modal-btn.cancel:hover{background:var(--card-hover)}
+.modal-btn.confirm{background:var(--blue);border:none;color:white}
+.modal-btn.confirm:hover{background:#5558e3}
+.modal-btn.confirm.danger{background:var(--red)}
+.modal-btn.confirm.danger:hover{background:#e22d4d}
+
+/* buy modal custom select */
+.buy-stock-trigger{width:100%;padding:10px 12px;border-radius:8px;border:1px solid var(--border);background:var(--card);color:var(--text);font-size:13px;cursor:pointer;text-align:left;display:flex;justify-content:space-between;align-items:center}
+.buy-stock-trigger:hover{border-color:var(--border-light)}
+.buy-stock-trigger::after{content:'▼';font-size:10px;color:var(--text-dim)}
+.buy-stock-dropdown{position:absolute;top:100%;left:0;right:0;margin-top:4px;max-height:240px;overflow-y:auto;background:var(--card);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.4);z-index:10}
+.buy-stock-search{padding:8px;border-bottom:1px solid var(--border)}
+.buy-stock-search input{width:100%;padding:8px 10px;border-radius:6px;border:1px solid var(--border);background:var(--surface);color:var(--text);font-size:13px}
+.buy-stock-item{padding:10px 12px;border-bottom:1px solid var(--border);cursor:pointer;display:flex;justify-content:space-between;align-items:center;gap:8px}
+.buy-stock-item:hover{background:var(--card-hover)}
+.buy-stock-item:last-child{border-bottom:none}
+.buy-stock-item .name{font-weight:600;font-size:13px}
+.buy-stock-item .code{font-size:11px;color:var(--text-dim)}
+.buy-stock-item .price{font-weight:600;font-variant-numeric:tabular-nums}
+.buy-stock-item .rate{font-size:12px;font-variant-numeric:tabular-nums}
+.buy-stock-wrap{position:relative}
+.buy-qty-actions{display:flex;gap:6px;margin-top:6px}
+.buy-qty-btn{padding:6px 12px;border-radius:6px;font-size:11px;font-weight:600;border:1px solid var(--border);background:transparent;color:var(--text-sec);cursor:pointer}
+.buy-qty-btn:hover{background:var(--card-hover);color:var(--text)}
 
 /* log filter */
 .log-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
@@ -217,6 +261,7 @@ body{font-family:-apple-system,'Pretendard','Noto Sans KR',sans-serif;background
       </div>
     </div>
     <div id="mode-tag" class="mode-tag mode-paper">🧪 모의투자</div>
+    <button class="pos-btn" onclick="openBuyModal()" style="margin-left:8px">➕ 수동 매수</button>
   </div>
   <div class="header-right">
     <div id="connection" class="connection"><span class="dot dot-wait"></span> 연결중...</div>
@@ -281,6 +326,7 @@ body{font-family:-apple-system,'Pretendard','Noto Sans KR',sans-serif;background
     <div class="section-title"><span class="icon">📈</span> 자산 추이 (최근 90일)</div>
     <div style="background:var(--card);border:1px solid var(--border);border-radius:var(--radius-sm);padding:12px">
       <div style="height:160px"><canvas id="chart-assets"></canvas></div>
+      <div style="height:100px;margin-top:4px"><canvas id="chart-daily-pnl"></canvas></div>
       <div style="height:100px;margin-top:4px"><canvas id="chart-pnl"></canvas></div>
     </div>
   </div>
@@ -335,6 +381,52 @@ body{font-family:-apple-system,'Pretendard','Noto Sans KR',sans-serif;background
     <div class="help-item"><span class="hi">시장 필터</span> KOSPI 하락세면 신규 매수 중단</div>
   </div>
 </div>
+
+<!-- 수동 매도 모달 -->
+<div id="sell-modal" class="modal-overlay" onclick="if(event.target===this)closeSellModal()">
+  <div class="modal" onclick="event.stopPropagation()">
+    <div class="modal-title">✋ 수동 매도</div>
+    <div id="sell-modal-body"></div>
+    <div class="modal-btns">
+      <button class="modal-btn cancel" onclick="closeSellModal()">취소</button>
+      <button id="sell-confirm-btn" class="modal-btn confirm" onclick="confirmSellModal()">매도하기</button>
+    </div>
+  </div>
+</div>
+
+<!-- 수동 매수 모달 -->
+<div id="buy-modal" class="modal-overlay" onclick="if(event.target===this)closeBuyModal()">
+  <div class="modal" onclick="event.stopPropagation()" style="max-width:420px">
+    <div class="modal-title">➕ 수동 매수</div>
+    <div id="buy-modal-body">
+      <div class="modal-row" style="flex-direction:column;align-items:stretch;gap:6px">
+        <span class="label">종목</span>
+        <div class="buy-stock-wrap">
+          <button type="button" id="buy-stock-trigger" class="buy-stock-trigger" onclick="toggleBuyStockList()">종목 선택</button>
+          <div id="buy-stock-dropdown" class="buy-stock-dropdown" style="display:none">
+            <div class="buy-stock-search"><input type="text" id="buy-stock-search-input" placeholder="종목명·코드 검색" oninput="filterBuyStockList()"></div>
+            <div id="buy-stock-list"></div>
+          </div>
+        </div>
+      </div>
+      <div class="modal-row" style="flex-direction:column;align-items:stretch;gap:6px">
+        <span class="label">수량</span>
+        <input type="number" id="buy-quantity" min="1" value="1" oninput="onBuyQuantityChange()" style="width:100%;padding:10px 12px;border-radius:8px;border:1px solid var(--border);background:var(--card);color:var(--text);text-align:right;font-size:14px">
+        <div class="buy-qty-actions">
+          <button type="button" class="buy-qty-btn" onclick="setBuyQtyPercent(0.25)">25%</button>
+          <button type="button" class="buy-qty-btn" onclick="setBuyQtyPercent(0.5)">50%</button>
+          <button type="button" class="buy-qty-btn" onclick="setBuyQtyPercent(1)">100%</button>
+        </div>
+      </div>
+      <div id="buy-preview" class="modal-row" style="display:none"><span class="label">예상 금액</span><span id="buy-estimate" class="value">-</span></div>
+      <div id="buy-warn" class="modal-warn" style="display:none"></div>
+    </div>
+    <div class="modal-btns">
+      <button class="modal-btn cancel" onclick="closeBuyModal()">취소</button>
+      <button id="buy-confirm-btn" class="modal-btn confirm" onclick="confirmBuyModal()" disabled>매수하기</button>
+    </div>
+  </div>
+</div>
 </div>
 
 <script>
@@ -372,6 +464,8 @@ let nextScanTime = null;
 let lastCash = 0;
 let lastInMarket = false;
 let activeFilter = 'all';
+let lastPositions = [];
+let lastStatus = null;
 
 function pad2(n){return String(n).padStart(2,'0');}
 function fmtTime(ts) {
@@ -386,6 +480,279 @@ function fmtTime(ts) {
 function fmtNum(n) { return n!=null ? n.toLocaleString('ko-KR') : '-'; }
 function fmtWon(n) { return n!=null ? n.toLocaleString('ko-KR')+'원' : '-'; }
 
+let SELL_FEE_RATE = 0.00015;
+let SELL_TAX_RATE = 0.0015;
+let BUY_FEE_RATE = 0.00015;
+
+async function loadFeeConfig() {
+  try {
+    const r = await fetch('/api/fee-config');
+    if (r.ok) {
+      const c = await r.json();
+      SELL_FEE_RATE = c.sell_fee_rate ?? SELL_FEE_RATE;
+      SELL_TAX_RATE = c.sell_tax_rate ?? SELL_TAX_RATE;
+      BUY_FEE_RATE = c.buy_fee_rate ?? BUY_FEE_RATE;
+    }
+  } catch (e) { /* fallback to defaults */ }
+}
+
+/** 수동 매도 예상 손익 (수수료·거래세 포함)
+ * - 매수비용 = 평균단가×수량×(1+매수수수료율)
+ * - 매도예상 = 현재가×수량, 매도수수료/거래세 = 매도예상×각 세율
+ * - 순수취액 = 매도예상 - 매도수수료 - 거래세
+ * - 손익 = 순수취액 - 매수비용 */
+function calcSellPreview(p) {
+  const qty = p.quantity;
+  const avg = p.avg_price;
+  const cur = p.current_price;
+  const buyCost = avg * qty * (1 + BUY_FEE_RATE);
+  const sellGross = cur * qty;
+  const sellFee = Math.round(sellGross * SELL_FEE_RATE);
+  const sellTax = Math.round(sellGross * SELL_TAX_RATE);
+  const sellNet = sellGross - sellFee - sellTax;
+  const pnl = sellNet - buyCost;
+  return { sellGross, sellFee, sellTax, sellNet, buyCost, pnl };
+}
+
+let sellModalPosition = null;
+
+function openSellModal(stockCode) {
+  const p = lastPositions.find(x=>x.stock_code===stockCode);
+  if(!p) return;
+  sellModalPosition = p;
+  const calc = calcSellPreview(p);
+  const isLoss = calc.pnl < 0;
+  let body = `
+    <div class="modal-row"><span class="label">종목</span><span class="value">${p.stock_name||p.stock_code}</span></div>
+    <div class="modal-row"><span class="label">수량</span><span class="value">${fmtNum(p.quantity)}주</span></div>
+    <div class="modal-row"><span class="label">매도 예상 금액</span><span class="value">${fmtWon(calc.sellGross)}</span></div>
+    <div class="modal-row"><span class="label">매도 수수료 (${(SELL_FEE_RATE*100).toFixed(2)}%)</span><span class="value">-${fmtWon(calc.sellFee)}</span></div>
+    <div class="modal-row"><span class="label">거래세 (${(SELL_TAX_RATE*100).toFixed(2)}%)</span><span class="value">-${fmtWon(calc.sellTax)}</span></div>
+    <div class="modal-row"><span class="label">순 수취액</span><span class="value">${fmtWon(Math.round(calc.sellNet))}</span></div>
+    <div class="modal-row"><span class="label">매수 비용 (수수료 포함)</span><span class="value">${fmtWon(Math.round(calc.buyCost))}</span></div>
+    <div class="modal-row"><span class="label">예상 손익</span><span class="value" style="color:${calc.pnl>=0?'var(--red)':'var(--blue)'}">${calc.pnl>=0?'+':''}${fmtWon(Math.round(calc.pnl))}</span></div>
+  `;
+  if(isLoss) {
+    const lossAmt = Math.round(calc.pnl);
+    body += `<div class="modal-warn">
+      <div class="modal-warn-title">⚠️ 수수료·세금 포함 시 손실 예상</div>
+      <div>매도 시 <b>${fmtWon(lossAmt)}</b> 손실 예상. (수수료 ${fmtWon(calc.sellFee)}, 거래세 ${fmtWon(calc.sellTax)} 차감)</div>
+    </div>`;
+  }
+  $('sell-modal-body').innerHTML = body;
+  const btn = $('sell-confirm-btn');
+  btn.textContent = isLoss ? '그래도 매도' : '매도하기';
+  btn.className = 'modal-btn confirm' + (isLoss ? ' danger' : '');
+  $('sell-modal').classList.add('show');
+}
+
+function closeSellModal() {
+  $('sell-modal').classList.remove('show');
+  sellModalPosition = null;
+}
+
+async function confirmSellModal() {
+  if(!sellModalPosition) return;
+  const btn = $('sell-confirm-btn');
+  btn.disabled = true;
+  btn.textContent = '처리 중...';
+  try {
+    const res = await fetch('/api/manual-sell', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ stock_code: sellModalPosition.stock_code, quantity: sellModalPosition.quantity }),
+    });
+    const data = await res.json().catch(()=>({}));
+    if(res.ok && data.success) {
+      closeSellModal();
+      refreshAll();
+      loadTrades();
+    } else {
+      alert('매도 실패: ' + (data.detail || data.message || '알 수 없는 오류'));
+    }
+  } catch(e) {
+    alert('매도 요청 실패: ' + e.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '매도하기';
+    btn.className = 'modal-btn confirm';
+  }
+}
+
+let buyModalPrice = null;
+let buyModalCode = null;
+let buyStockListData = [];
+let buyStockListCache = null;
+let buyStockListCacheTime = 0;
+const BUY_STOCK_CACHE_MS = 120000;
+
+function openBuyModal() {
+  $('buy-stock-trigger').textContent = '종목 선택';
+  $('buy-quantity').value = '1';
+  $('buy-preview').style.display = 'none';
+  $('buy-warn').style.display = 'none';
+  $('buy-confirm-btn').disabled = true;
+  buyModalPrice = null;
+  buyModalCode = null;
+  $('buy-stock-dropdown').style.display = 'none';
+  ($('buy-stock-search-input')||{}).value = '';
+  $('buy-modal').classList.add('show');
+  loadBuyStockList();
+}
+
+async function loadBuyStockList() {
+  const listEl = $('buy-stock-list');
+  const now = Date.now();
+  if(buyStockListCache && (now - buyStockListCacheTime) < BUY_STOCK_CACHE_MS) {
+    buyStockListData = buyStockListCache;
+    renderBuyStockList(buyStockListData);
+    return;
+  }
+  listEl.innerHTML = '<div style="padding:20px;text-align:center;color:var(--text-dim)">가격 조회 중...</div>';
+  try {
+    const r = await fetch('/api/watch-list-prices');
+    const data = await r.json();
+    buyStockListData = data || [];
+    buyStockListCache = buyStockListData;
+    buyStockListCacheTime = Date.now();
+    renderBuyStockList(buyStockListData);
+  } catch(e) {
+    listEl.innerHTML = '<div style="padding:20px;text-align:center;color:var(--red)">조회 실패</div>';
+  }
+}
+
+function renderBuyStockList(items) {
+  const listEl = $('buy-stock-list');
+  if(!items.length) {
+    listEl.innerHTML = '<div style="padding:20px;color:var(--text-dim)">검색 결과 없음</div>';
+    return;
+  }
+  listEl.innerHTML = items.map(item=>{
+    const rate = item.change_rate;
+    const rateCls = rate > 0 ? 'profit-up' : rate < 0 ? 'profit-down' : '';
+    const rateStr = rate > 0 ? '+' : '';
+    return `<div class="buy-stock-item" data-code="${item.code}" data-price="${item.current_price||0}">
+      <div><div class="name">${(item.name||item.code).replace(/"/g,'&quot;')}</div><div class="code">${item.code}</div></div>
+      <div style="text-align:right"><div class="price">${item.current_price?fmtWon(item.current_price):'-'}</div><div class="rate ${rateCls}">${rate!=null?rateStr+rate+'%':''}</div></div>
+    </div>`;
+  }).join('');
+  listEl.querySelectorAll('.buy-stock-item').forEach(el=>{
+    el.onclick=()=>selectBuyStock(el.dataset.code, parseInt(el.dataset.price,10));
+  });
+}
+
+function filterBuyStockList() {
+  const q = (($('buy-stock-search-input')||{}).value||'').trim().toLowerCase();
+  const filtered = q ? buyStockListData.filter(x=>
+    (x.name||'').toLowerCase().includes(q) || (x.code||'').includes(q)
+  ) : buyStockListData;
+  renderBuyStockList(filtered);
+}
+
+function toggleBuyStockList() {
+  const dd = $('buy-stock-dropdown');
+  const modal = dd.closest('.modal');
+  const open = dd.style.display !== 'block';
+  dd.style.display = open ? 'block' : 'none';
+  if(modal) modal.style.overflowY = open ? 'hidden' : '';
+  if(open) setTimeout(()=>document.addEventListener('click', _buyDropdownClose), 0);
+}
+
+function _buyDropdownClose(e) {
+  if(!e.target.closest('.buy-stock-wrap')) {
+    const dd = $('buy-stock-dropdown');
+    dd.style.display = 'none';
+    const modal = dd.closest('.modal');
+    if(modal) modal.style.overflowY = '';
+    document.removeEventListener('click', _buyDropdownClose);
+  }
+}
+
+function selectBuyStock(code, price) {
+  buyModalCode = code;
+  buyModalPrice = price;
+  const item = buyStockListData.find(x=>x.code===code);
+  $('buy-stock-trigger').textContent = item ? `${item.name||code} (${fmtWon(price)})` : code;
+  const dd = $('buy-stock-dropdown');
+  dd.style.display = 'none';
+  const modal = dd.closest('.modal');
+  if(modal) modal.style.overflowY = '';
+  document.removeEventListener('click', _buyDropdownClose);
+  onBuyQuantityChange();
+}
+
+function closeBuyModal() {
+  $('buy-modal').classList.remove('show');
+  $('buy-stock-dropdown').style.display = 'none';
+  const modal = $('buy-stock-dropdown')?.closest('.modal');
+  if(modal) modal.style.overflowY = '';
+  buyModalPrice = null;
+  buyModalCode = null;
+  document.removeEventListener('click', _buyDropdownClose);
+}
+
+function setBuyQtyPercent(pct) {
+  if(!buyModalPrice || buyModalPrice<=0) return;
+  const cash = lastStatus?.total_cash || lastCash || 0;
+  if(cash<=0) return;
+  const maxQty = Math.floor((cash * 0.99) / (buyModalPrice * (1 + BUY_FEE_RATE)));
+  const qty = Math.max(1, Math.floor(maxQty * pct));
+  $('buy-quantity').value = qty;
+  onBuyQuantityChange();
+}
+
+function onBuyQuantityChange() {
+  const qty = parseInt($('buy-quantity').value, 10) || 0;
+  if(!buyModalPrice || qty<=0) {
+    $('buy-preview').style.display = 'none';
+    $('buy-confirm-btn').disabled = true;
+    return;
+  }
+  const gross = buyModalPrice * qty;
+  const fee = Math.round(gross * BUY_FEE_RATE);
+  const total = gross + fee;
+  $('buy-estimate').textContent = fmtWon(total) + ' (수수료 ' + fmtWon(fee) + ')';
+  $('buy-preview').style.display = 'flex';
+  const cash = lastStatus?.total_cash || lastCash || 0;
+  if(cash > 0 && total > cash) {
+    $('buy-warn').innerHTML = `<div class="modal-warn-title">⚠️ 잔액 부족</div><div>가용 현금 ${fmtWon(cash)}보다 ${fmtWon(total - cash)} 부족합니다.</div>`;
+    $('buy-warn').style.display = 'block';
+    $('buy-confirm-btn').disabled = true;
+  } else {
+    $('buy-warn').style.display = 'none';
+    $('buy-confirm-btn').disabled = false;
+  }
+}
+
+async function confirmBuyModal() {
+  const code = buyModalCode;
+  const qty = parseInt($('buy-quantity').value, 10);
+  if(!code || qty<=0) return;
+  const btn = $('buy-confirm-btn');
+  btn.disabled = true;
+  btn.textContent = '처리 중...';
+  try {
+    const res = await fetch('/api/manual-buy', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ stock_code: code, quantity: qty }),
+    });
+    const data = await res.json().catch(()=>({}));
+    if(res.ok && data.success) {
+      closeBuyModal();
+      refreshAll();
+      loadTrades();
+    } else {
+      alert('매수 실패: ' + (data.detail || data.message || '알 수 없는 오류'));
+    }
+  } catch(e) {
+    alert('매수 요청 실패: ' + e.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '매수하기';
+  }
+}
+
 const REASON_LABEL = {
   GOLDEN_CROSS: '골든크로스',
   UPTREND_ENTRY: '상승추세',
@@ -397,6 +764,7 @@ const REASON_LABEL = {
   TAKE_PROFIT: '익절 (목표 달성)',
   TRAILING_STOP: '트레일링 스탑 (고점 대비 하락)',
   MAX_HOLDING: '최대 보유 기간 초과',
+  MANUAL: '수동 매도',
 };
 
 function switchRightTab(el) {
@@ -508,6 +876,7 @@ function resolvePhase(s) {
 }
 
 function updateStatus(s) {
+  lastStatus = s;
   const info = resolvePhase(s);
   $('status-icon').textContent = info.icon;
   $('status-phase').textContent = info.label;
@@ -571,6 +940,7 @@ setInterval(()=>{
 },1000);
 
 function updatePositions(positions) {
+  lastPositions = positions || [];
   const el=$('positions');
   if(!positions||positions.length===0){
     el.innerHTML='<div class="pos-empty">아직 보유한 종목이 없어요. 매수 조건이 충족되면 자동으로 매수합니다.</div>';
@@ -607,6 +977,7 @@ function updatePositions(positions) {
     </div><div class="pos-profit">
       <div class="pos-pct ${cls}">${s}${p.profit_rate.toFixed(2)}%</div>
       <div class="pos-amt ${cls}">${s}${fmtWon(p.profit_amount)}</div>
+      <button class="pos-btn sell pos-sell-btn" onclick="openSellModal('${p.stock_code}')">✋ 수동 매도</button>
     </div></div>`;
   }).join('');
 }
@@ -616,10 +987,10 @@ function getFilterGroup(type){
   if(type.includes('scan')) return 'scan';
   return 'system';
 }
-/** 매매 필터: 체결·실제 매매 검토만. 분석(skip) 제외. */
+/** 매매 필터: 체결·매수/매도 검토·보류(이유 포함) 모두 표시. */
 function isTradeFilterMatch(e){
   if(e.type==='order_exec') return true;
-  if((e.type==='buy_eval'||e.type==='sell_eval') && e.data && e.data.action && !e.data.skip) return true;
+  if((e.type==='buy_eval'||e.type==='sell_eval') && e.data && e.data.action) return true;
   return false;
 }
 /** 분석 필터: 스캔 시작/종료 + 조건 미달(skip) 이벤트. */
@@ -656,6 +1027,8 @@ function buildDetailHtml(d){
   if(d.gap_pct!=null) items.push(['괴리율',d.gap_pct+'%']);
   if(d.available) items.push(['가용금액',fmtWon(d.available)]);
   if(d.reason) items.push(['주문사유',d.reason]);
+  if(d.error) items.push(['오류사유',d.error]);
+  if(d.order_no) items.push(['주문번호',d.order_no]);
   if(d.holding!=null) items.push(['보유',d.holding+'종목']);
   if(d.sell!=null) items.push(['매도',d.sell+'건']);
   if(d.buy!=null) items.push(['매수',d.buy+'건']);
@@ -959,7 +1332,7 @@ async function loadHistory(){
   }catch(e){}
 }
 
-let chartAssets=null, chartPnl=null;
+let chartAssets=null, chartDailyPnl=null, chartPnl=null;
 
 const CHART_TOOLTIP = {
   backgroundColor:'#181b25',borderColor:'#323650',borderWidth:1,
@@ -979,12 +1352,15 @@ async function loadPerformance(){
     const labels=h.map(d=>d.report_date.slice(5));
     const assets=h.map(d=>d.total_assets||0);
     const pnl=h.map(d=>d.cumulative_pnl||0);
+    const dailyPnl=pnl.map((v,i)=>i===0?v:v-pnl[i-1]);
     const dw=data.capital_events||[];
 
     const last=h[h.length-1];
     if(last.total_cash>0 && !lastCash) $('sum-cash').textContent=fmtWon(last.total_cash);
 
-    const pnlColors=pnl.map(v=>v>=0?'rgba(244,63,94,0.7)':'rgba(99,102,241,0.7)');
+    const dailyPnlColors=dailyPnl.map(v=>v>=0?'rgba(244,63,94,0.8)':'rgba(99,102,241,0.8)');
+    const pnlColors=pnl.map(v=>v>=0?'rgba(244,63,94,0.8)':'rgba(99,102,241,0.8)');
+    const dailyMaxAbs=Math.max(...dailyPnl.map(Math.abs), 10000);
 
     const annotations={};
     dw.forEach((ev,i)=>{
@@ -1028,18 +1404,54 @@ async function loadPerformance(){
       }
     });
 
-    if(chartPnl) chartPnl.destroy();
-    chartPnl=new Chart($('chart-pnl').getContext('2d'),{
+    if(chartDailyPnl) chartDailyPnl.destroy();
+    chartDailyPnl=new Chart($('chart-daily-pnl').getContext('2d'),{
       type:'bar',
       data:{labels, datasets:[{
-        label:'누적 순수익', data:pnl, backgroundColor:pnlColors,
-        borderRadius:3, barPercentage:0.6,
+        label:'일일 순수익', data:dailyPnl, backgroundColor:dailyPnlColors,
+        borderRadius:3, barPercentage:0.6, base:0,
       }]},
       options:{
         responsive:true, maintainAspectRatio:false,
         interaction:{mode:'index',intersect:false},
         plugins:{
-          legend:{display:true,labels:{color:'#9ba1b7',font:{size:10},boxWidth:10,padding:6}},
+          legend:{display:true,onClick:function(){},
+            labels:{color:'#9ba1b7',font:{size:10},boxWidth:10,padding:6,
+              generateLabels:()=>[
+                {text:'수익',fillStyle:'#f43f5e',strokeStyle:'#f43f5e',datasetIndex:0,index:0,hidden:false},
+                {text:'손실',fillStyle:'#6366f1',strokeStyle:'#6366f1',datasetIndex:0,index:1,hidden:false}
+              ]},
+          },
+          tooltip:CHART_TOOLTIP,
+        },
+        scales:{
+          x:{grid:{color:'#252838'},ticks:{color:'#646b82',font:{size:9},maxRotation:0}},
+          y:{grid:{color:'#252838',drawOnChartArea:true},
+            min:-dailyMaxAbs, max:dailyMaxAbs,
+            ticks:{color:'#646b82',font:{size:9},callback:fmtAxis},
+          },
+        }
+      }
+    });
+
+    if(chartPnl) chartPnl.destroy();
+    chartPnl=new Chart($('chart-pnl').getContext('2d'),{
+      type:'bar',
+      data:{labels, datasets:[{
+        label:'누적 순수익', data:pnl, backgroundColor:pnlColors,
+        borderRadius:3, barPercentage:0.6, base:0,
+      }]},
+      options:{
+        responsive:true, maintainAspectRatio:false,
+        interaction:{mode:'index',intersect:false},
+        plugins:{
+          legend:{display:true,onClick:function(){},
+            labels:{color:'#9ba1b7',font:{size:10},boxWidth:10,padding:6,
+              generateLabels:()=>[
+                {text:'수익',fillStyle:'#f43f5e',strokeStyle:'#f43f5e',datasetIndex:0,index:0,hidden:false},
+                {text:'손실',fillStyle:'#6366f1',strokeStyle:'#6366f1',datasetIndex:0,index:1,hidden:false}
+              ]},
+          },
           tooltip:CHART_TOOLTIP,
         },
         scales:{
@@ -1053,6 +1465,7 @@ async function loadPerformance(){
 }
 
 connectSSE();
+loadFeeConfig();
 loadHistory();
 refreshAll();
 loadPerformance();

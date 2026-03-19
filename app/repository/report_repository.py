@@ -121,7 +121,7 @@ class ReportRepository:
             return
         if event_type == "buy_eval" and data:
             action = data.get("action")
-            if action not in ("매수검토", None):
+            if action not in ("매수검토", "매수보류", None):
                 return
         await self._db.execute(
             """INSERT INTO bot_events

@@ -28,8 +28,8 @@ class Settings(BaseSettings):
     rsi_overbought: int = 70
     rsi_oversold: int = 30
 
-    max_investment_ratio: float = 0.1
-    max_holding_count: int = 5
+    max_investment_ratio: float = 1.0  # (레거시) 1.0=미사용. 종목당 투자는 가용금/목표종목수로 계산
+    max_holding_count: int = 0  # 0 = 제한 없음
     max_daily_buy_count: int = 3
     max_holding_days: int = 20
     stop_loss_rate: float = -5.0
@@ -68,8 +68,8 @@ class Settings(BaseSettings):
     @field_validator("max_holding_count")
     @classmethod
     def _validate_holding_count(cls, v: int) -> int:
-        if v < 1:
-            raise ValueError("max_holding_count는 1 이상이어야 합니다")
+        if v < 0:
+            raise ValueError("max_holding_count는 0 이상이어야 합니다 (0=제한없음)")
         return v
 
     @field_validator("max_daily_buy_count")

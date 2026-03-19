@@ -99,6 +99,28 @@ class TradingService:
     def positions(self) -> list[Position]:
         return self._last_positions
 
+    async def refresh_holdings(self) -> None:
+        """잔고·계좌 요약을 KIS API에서 다시 조회해 캐시를 갱신. 수동 매수/매도 후 호출."""
+        try:
+            positions = await self._order.get_balance()
+        except Exception:
+            logger.warning("잔고 갱신 실패 — 기존 캐시 유지")
+            return
+        self._last_positions = positions or []
+        holding_codes = {p.stock_code for p in self._last_positions}
+        self._highest_prices = {
+            code: price for code, price in self._highest_prices.items()
+            if code in holding_codes
+        }
+        self._trailing_activated &= holding_codes
+        try:
+            self._last_account_summary = await self._order.get_account_summary()
+        except Exception:
+            pass
+        today = datetime.now().strftime("%Y-%m-%d")
+        counts = await self._order_log.get_today_counts(today)
+        self._daily_buy_count = counts["buy_count"]
+
     async def _backfill_missing_reports(self) -> None:
         today = datetime.now().strftime("%Y-%m-%d")
         last_report = await self._report.get_yesterday_report(
@@ -155,7 +177,7 @@ class TradingService:
 
     async def recover_state(self) -> None:
         self._phase = "RECOVERING"
-        self._emit(EventType.STATE_CHANGE, "서버를 재시작했어요. 이전 상태를 복구하는 중...")
+        self._emit(EventType.STATE_CHANGE, "상태 복구 중...")
 
         await self._backfill_missing_reports()
 
@@ -198,20 +220,25 @@ class TradingService:
 
         trailing_info = ""
         if self._trailing_activated:
-            codes = ", ".join(
-                f"{stock_fmt(c)}(고점:{self._highest_prices.get(c, 0):,}원)"
-                for c in self._trailing_activated
-            )
-            trailing_info = f" | 트레일링 활성: {codes}"
+            n = len(self._trailing_activated)
+            if n <= 2:
+                codes = ", ".join(
+                    f"{stock_fmt(c)}(고점:{self._highest_prices.get(c, 0):,}원)"
+                    for c in self._trailing_activated
+                )
+                trailing_info = f" | 트레일링: {codes}"
+            else:
+                trailing_info = f" | 트레일링 스탑 {n}종목 활성"
 
         holding = len(self._last_positions)
+        max_buy = self._settings.max_daily_buy_count
+        buy_info = f" | 오늘 매수 {self._daily_buy_count}/{max_buy}건" if max_buy > 0 and self._daily_buy_count > 0 else ""
+
         if holding > 0:
             names = ", ".join(stock_fmt(p.stock_code) for p in self._last_positions)
-            msg = f"상태 복구 완료! 보유 {holding}종목: {names}{trailing_info}"
+            msg = f"상태 복구 완료. 보유 {holding}종목: {names}{trailing_info}{buy_info}"
         else:
-            msg = "상태 복구 완료! 현재 보유 종목이 없습니다."
-        if self._daily_buy_count > 0:
-            msg += f" (오늘 이미 {self._daily_buy_count}건 매수함)"
+            msg = f"상태 복구 완료. 보유 종목 없음{buy_info}"
         trade_logger.info(msg)
         self._emit(EventType.STATE_CHANGE, msg)
 
@@ -321,9 +348,10 @@ class TradingService:
 
                 if buy_allowed and self._daily_buy_count >= self._settings.max_daily_buy_count:
                     self._emit(EventType.BUY_EVAL,
-                        f"⏸️ 오늘 매수 횟수({self._settings.max_daily_buy_count}회)를 모두 사용했어요")
+                        f"⏸️ 오늘 매수 한도({self._daily_buy_count}/{self._settings.max_daily_buy_count}건)를 모두 사용했어요")
                     buy_allowed = False
-                if buy_allowed and current_holding >= self._settings.max_holding_count:
+                if (self._settings.max_holding_count > 0
+                        and buy_allowed and current_holding >= self._settings.max_holding_count):
                     self._emit(EventType.BUY_EVAL,
                         f"⏸️ 최대 보유 종목 수({self._settings.max_holding_count}개)에 도달했어요")
                     buy_allowed = False
@@ -564,7 +592,8 @@ class TradingService:
             return "SKIP"
         if stock_code in unfilled_codes:
             return "SKIP"
-        if current_holding_count >= self._settings.max_holding_count:
+        if (self._settings.max_holding_count > 0
+                and current_holding_count >= self._settings.max_holding_count):
             return "SKIP"
         if self._daily_buy_count >= self._settings.max_daily_buy_count:
             return "SKIP"
@@ -649,23 +678,10 @@ class TradingService:
 
         if self._check_golden_cross(ma_result, price_data.current_price):
             buy_reason = OrderReason.GOLDEN_CROSS
-            self._emit(EventType.BUY_EVAL,
-                f"✨ {name} — 골든크로스 확인! 매수 검토 중 "
-                f"(MA5:{ma5_now:,.0f} > MA20:{ma20_now:,.0f}, 현재가:{price_data.current_price:,}원)",
-                {**ma_data, "signal": "골든크로스", "action": "매수검토"})
         elif self._check_existing_uptrend(ma_result, candles, price_data.current_price):
             buy_reason = OrderReason.UPTREND_ENTRY
-            gap = (ma5_now - ma20_now) / ma20_now * 100 if ma20_now > 0 else 0
-            self._emit(EventType.BUY_EVAL,
-                f"📈 {name} — 안정적 상승추세 확인! 매수 검토 중 "
-                f"(MA5:{ma5_now:,.0f} > MA20:{ma20_now:,.0f}, 괴리율:{gap:.1f}%)",
-                {**ma_data, "signal": "상승추세", "gap_pct": round(gap, 1), "action": "매수검토"})
         elif self._check_momentum_entry(ma_result, price_data.current_price, rsi):
             buy_reason = OrderReason.MOMENTUM_ENTRY
-            self._emit(EventType.BUY_EVAL,
-                f"🚀 {name} — 모멘텀 상승 중! 단타 매수 검토 "
-                f"(MA5:{ma5_now:,.0f} > MA20:{ma20_now:,.0f}, RSI:{rsi:.0f})",
-                {**ma_data, "signal": "모멘텀", "action": "매수검토"})
         else:
             rel = ">" if ma5_now > ma20_now else "<"
             gap_pct = round((ma5_now - ma20_now) / ma20_now * 100, 2) if ma20_now > 0 else 0
@@ -679,25 +695,52 @@ class TradingService:
             if rsi is not None:
                 if rsi > self._settings.rsi_overbought:
                     self._emit(EventType.BUY_EVAL,
-                        f"🔥 {name} — 과열 상태(RSI {rsi:.0f})라 지금 사면 고점 매수 위험이 있어 보류합니다",
-                        {**ma_data, "signal": "RSI과매수", "skip": "RSI과열"})
+                        f"🔥 {name} — 골든크로스 확인했으나 RSI 과열({rsi:.0f})로 매수 보류",
+                        {**ma_data, "signal": "RSI과매수", "skip": "RSI과열", "action": "매수보류"})
                     return "SKIP"
                 if rsi < 45:
                     self._emit(EventType.BUY_EVAL,
-                        f"❄️ {name} — 모멘텀 부족(RSI {rsi:.0f}). 올라가는 종목만 사려면 RSI 45 이상이어야 해요",
-                        {**ma_data, "signal": "RSI약함", "skip": "RSI부족"})
+                        f"❄️ {name} — 골든크로스 확인했으나 RSI 부족({rsi:.0f})로 매수 보류",
+                        {**ma_data, "signal": "RSI약함", "skip": "RSI부족", "action": "매수보류"})
                     return "SKIP"
 
-        available = await self._order.get_available_cash(stock_code)
-        invest = int(available * self._settings.max_investment_ratio)
         price_with_fee = price_data.current_price * (1 + C.BUY_FEE_RATE)
-        quantity = int(invest / price_with_fee)
+        acct = self._last_account_summary or await self._order.get_account_summary()
+        if acct and self._last_account_summary is None:
+            self._last_account_summary = acct
+        available = acct.get("total_cash", 0) if acct else 0
+        if available <= 0:
+            psbl = await self._order.get_available_cash(stock_code)
+            if psbl > 0:
+                available = psbl
+                logger.info("잔고 0 → 매수가능금액 %s원 사용", f"{psbl:,}")
+        if available <= 0:
+            yesterday = await self._report.get_yesterday_report(datetime.now().strftime("%Y-%m-%d"))
+            if yesterday and yesterday.get("total_cash", 0) >= price_with_fee:
+                available = yesterday["total_cash"]
+                logger.info("API 잔고 0 → 전일 리포트 total_cash %s원 사용", f"{available:,}")
+        n_slots = (
+            self._settings.max_holding_count
+            if self._settings.max_holding_count > 0
+            else max(5, len(self._settings.watch_list_codes))
+        )
+        invest_per_stock = int(available / n_slots)
+        if self._settings.max_investment_ratio < 1.0:
+            invest_per_stock = min(invest_per_stock, int(available * self._settings.max_investment_ratio))
+        quantity = int(invest_per_stock / price_with_fee)
         if quantity <= 0:
-            self._emit(EventType.BUY_EVAL,
-                f"💰 {name} — 매수 조건을 충족했지만 투자 가능 금액이 부족합니다 "
-                f"(가용: {available:,}원, 필요: {price_data.current_price:,}원 이상)",
-                {**ma_data, "skip": "잔액부족", "available": available})
-            return "SKIP"
+            if available >= price_with_fee:
+                quantity = 1
+            else:
+                logger.warning(
+                    "잔액부족: %s — 가용=%s원, 필요=%s원(1주+수수료), acct=%s",
+                    stock_code, available, int(price_with_fee),
+                    {k: v for k, v in (acct or {}).items()},
+                )
+                self._emit(EventType.BUY_EVAL,
+                    f"💰 {name} — 골든크로스 확인했으나 잔액 부족으로 매수 보류 (가용: {available:,}원)",
+                    {**ma_data, "skip": "잔액부족", "available": available, "action": "매수보류"})
+                return "SKIP"
 
         reason_label = {
             OrderReason.GOLDEN_CROSS: "골든크로스",
@@ -705,9 +748,25 @@ class TradingService:
             OrderReason.MOMENTUM_ENTRY: "모멘텀 단타",
         }.get(buy_reason, "매수")
 
-        result = await self._order.execute_order(
-            stock_code, OrderType.BUY, quantity,
-        )
+        rsi_str = f", RSI:{rsi:.0f}" if rsi is not None else ""
+        self._emit(EventType.BUY_EVAL,
+            f"✨ {name} — {reason_label} 확인! 매수 주문 전송 중 "
+            f"({quantity}주 × {price_data.current_price:,}원)",
+            {**ma_data, "signal": reason_label, "action": "매수검토"})
+
+        try:
+            result = await self._order.execute_order(
+                stock_code, OrderType.BUY, quantity, price=0,
+            )
+        except Exception as exc:
+            logger.exception("매수 주문 실행 중 예외: %s %d주", stock_code, quantity)
+            self._emit(EventType.ORDER_EXEC,
+                f"❌ {name} 매수 주문 오류 — {type(exc).__name__}: {exc}",
+                {"type": "BUY", "code": stock_code, "qty": quantity,
+                 "price": price_data.current_price, "success": False,
+                 "reason": buy_reason.value, "error": str(exc)})
+            return "SKIP"
+
         await self._order_log.save_order(
             stock_code, OrderType.BUY, buy_reason,
             quantity, price_data.current_price, result, datetime.now().isoformat(),
@@ -719,14 +778,15 @@ class TradingService:
                 f"({reason_label})", {
                 "type": "BUY", "code": stock_code, "qty": quantity,
                 "price": price_data.current_price, "success": True,
-                "reason": buy_reason.value,
+                "reason": buy_reason.value, "order_no": result.order_no,
             })
         else:
+            err_msg = result.error_message or "알 수 없는 오류"
             self._emit(EventType.ORDER_EXEC,
-                f"❌ {name} 매수 주문 실패 — {result.error_message or '알 수 없는 오류'}", {
+                f"❌ {name} 매수 주문 실패 — {err_msg}", {
                 "type": "BUY", "code": stock_code, "qty": quantity,
                 "price": price_data.current_price, "success": False,
-                "reason": buy_reason.value,
+                "reason": buy_reason.value, "error": err_msg,
             })
         trade_logger.info(
             "매수 %s: %s %d주 @ %d원 (%s)", "성공" if result.success else "실패",

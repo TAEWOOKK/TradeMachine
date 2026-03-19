@@ -1,16 +1,29 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from datetime import datetime
 from pathlib import Path
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import HTMLResponse, StreamingResponse
 
+from app.config import constants as C
 from app.config.stock_names import get_name
-from app.core.dependencies import get_order_log_repo, get_report_repo, get_trading_service
-from app.core.event_bus import EventBus, get_event_bus
+from app.core.dependencies import (
+    get_event_bus,
+    get_market_repo,
+    get_order_log_repo,
+    get_order_repo,
+    get_report_repo,
+    get_trading_service,
+)
+from app.core.event_bus import EventType, get_event_bus
+from app.model.domain import OrderReason, OrderType
+from app.model.dto import ManualBuyRequest, ManualSellRequest
+from app.repository.market_data_repository import MarketDataRepository
 from app.repository.order_log_repository import OrderLogRepository
+from app.repository.order_repository import OrderRepository
 from app.repository.report_repository import ReportRepository
 from app.service.trading_service import TradingService
 
@@ -56,6 +69,9 @@ async def get_status(
     prev_cumulative = yesterday.get("cumulative_pnl", 0) if yesterday else 0
     status["cumulative_pnl"] = prev_cumulative + realized["total_pnl"]
     status["initial_assets"] = yesterday.get("total_assets", 0) if yesterday else 0
+    status["watch_list_detail"] = [
+        {"code": c, "name": get_name(c)} for c in status.get("watch_list", [])
+    ]
 
     if status.get("total_cash", 0) <= 0 and yesterday:
         status["total_cash"] = yesterday.get("total_cash", 0)
@@ -194,6 +210,142 @@ async def get_trades(
     for t in trades:
         t["stock_name"] = get_name(t["stock_code"])
     return trades
+
+
+@router.get("/api/watch-list-prices")
+async def get_watch_list_prices(
+    svc: TradingService = Depends(get_trading_service),
+    market_repo: MarketDataRepository = Depends(get_market_repo),
+) -> list[dict]:
+    """관심 종목 현재가·등락률 일괄 조회 (수동 매수용)."""
+    codes = svc.status.get("watch_list", [])
+    if not codes:
+        return []
+
+    async def _fetch(code: str) -> dict:
+        try:
+            p = await market_repo.get_current_price(code)
+            return {"code": code, "name": get_name(code), "current_price": p.current_price, "change_rate": round(p.change_rate, 1)}
+        except Exception:
+            return {"code": code, "name": get_name(code), "current_price": 0, "change_rate": 0}
+
+    results = await asyncio.gather(*[_fetch(c) for c in codes])
+    return list(results)
+
+
+@router.get("/api/fee-config")
+async def get_fee_config() -> dict:
+    """수동 매도 시 수수료·세금 계산용 상수."""
+    return {
+        "sell_fee_rate": C.SELL_FEE_RATE,
+        "sell_tax_rate": C.SELL_TAX_RATE,
+        "buy_fee_rate": C.BUY_FEE_RATE,
+    }
+
+
+@router.post("/api/manual-sell")
+async def manual_sell(
+    body: ManualSellRequest,
+    svc: TradingService = Depends(get_trading_service),
+    order_repo: OrderRepository = Depends(get_order_repo),
+    order_log_repo: OrderLogRepository = Depends(get_order_log_repo),
+) -> dict:
+    """수동 매도. quantity 생략 시 전량 매도."""
+    stock_code = body.stock_code
+    quantity = body.quantity
+    if not stock_code:
+        raise HTTPException(status_code=400, detail="stock_code가 필요합니다")
+
+    pos = next((p for p in svc.positions if p.stock_code == stock_code), None)
+    if not pos:
+        raise HTTPException(status_code=404, detail="보유 종목이 아닙니다")
+    qty = quantity if quantity is not None and 0 < quantity <= pos.quantity else pos.quantity
+    if qty <= 0:
+        raise HTTPException(status_code=400, detail="수량이 올바르지 않습니다")
+
+    result = await order_repo.execute_order(
+        stock_code=stock_code,
+        order_type=OrderType.SELL,
+        quantity=qty,
+        price=pos.current_price,
+    )
+    if result.success:
+        await order_log_repo.save_order(
+            stock_code, OrderType.SELL, OrderReason.MANUAL,
+            qty, pos.current_price, result, datetime.now().isoformat(),
+        )
+        await svc.refresh_holdings()
+        from app.core.event_bus import BotEvent
+
+        bus = get_event_bus()
+        name = get_name(stock_code)
+        bus.emit(BotEvent(
+            EventType.ORDER_EXEC,
+            f"✋ 수동 매도: {name} {qty}주 × {pos.current_price:,}원",
+            data={
+                "type": "SELL", "code": stock_code, "qty": qty,
+                "price": pos.current_price, "success": True, "reason": "MANUAL",
+            },
+        ))
+    return {
+        "success": result.success,
+        "order_no": result.order_no,
+        "message": result.error_message or "매도 완료",
+    }
+
+
+@router.post("/api/manual-buy")
+async def manual_buy(
+    body: ManualBuyRequest,
+    svc: TradingService = Depends(get_trading_service),
+    order_repo: OrderRepository = Depends(get_order_repo),
+    order_log_repo: OrderLogRepository = Depends(get_order_log_repo),
+    market_repo: MarketDataRepository = Depends(get_market_repo),
+) -> dict:
+    """수동 매수. 관심 종목에서 선택해 매수."""
+    stock_code = body.stock_code
+    quantity = body.quantity
+    status = svc.status
+    if stock_code not in status.get("watch_list", []):
+        raise HTTPException(status_code=400, detail="관심 종목에 없는 종목입니다")
+
+    try:
+        price_data = await market_repo.get_current_price(stock_code)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"현재가 조회 실패: {e}") from e
+
+    if price_data.current_price <= 0:
+        raise HTTPException(status_code=400, detail="현재가를 조회할 수 없습니다")
+
+    result = await order_repo.execute_order(
+        stock_code=stock_code,
+        order_type=OrderType.BUY,
+        quantity=quantity,
+        price=price_data.current_price,
+    )
+    if result.success:
+        await order_log_repo.save_order(
+            stock_code, OrderType.BUY, OrderReason.MANUAL,
+            quantity, price_data.current_price, result, datetime.now().isoformat(),
+        )
+        await svc.refresh_holdings()
+        from app.core.event_bus import BotEvent
+
+        bus = get_event_bus()
+        name = get_name(stock_code)
+        bus.emit(BotEvent(
+            EventType.ORDER_EXEC,
+            f"✋ 수동 매수: {name} {quantity}주 × {price_data.current_price:,}원",
+            data={
+                "type": "BUY", "code": stock_code, "qty": quantity,
+                "price": price_data.current_price, "success": True, "reason": "MANUAL",
+            },
+        ))
+    return {
+        "success": result.success,
+        "order_no": result.order_no,
+        "message": result.error_message or "매수 완료",
+    }
 
 
 @router.get("/api/events/stream")
