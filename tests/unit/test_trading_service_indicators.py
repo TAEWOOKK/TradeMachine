@@ -85,14 +85,14 @@ class TestCheckGoldenCross:
         )
         assert service._check_golden_cross(ma, current_price=115) is False
 
-    def test_check_golden_cross_false_not_confirmed(self, service):
-        """Cross at day 1, but signal_confirm_days=3 requires cross_day >= 3."""
+    def test_check_golden_cross_true_one_day_confirmed(self, service):
+        """Cross at day 1, 1일 확인으로 통과 (완화된 조건)."""
         ma = MaResult(
             ma_short=[105, 100, 96, 94, 92, 90, 88, 86],
             ma_long=[100, 99, 99, 99, 99, 99, 99, 99],
             candles=[],
         )
-        assert service._check_golden_cross(ma, current_price=115) is False
+        assert service._check_golden_cross(ma, current_price=115) is True
 
     def test_check_golden_cross_false_price_below_ma20(self, service):
         """Valid cross & confirmation, but current_price < MA(20)."""

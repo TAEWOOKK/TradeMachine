@@ -648,13 +648,6 @@ class TradingService:
             change_rate=price_data.change_rate)
 
         if self._check_golden_cross(ma_result, price_data.current_price):
-            cross_idx = self._find_cross_day_index(ma_result)
-            if cross_idx is not None and not self._check_volume_confirmation(candles, cross_idx):
-                self._emit(EventType.BUY_EVAL,
-                    f"📊 {name} — 골든크로스 감지했지만 거래량이 부족해서 보류 "
-                    f"(MA5:{ma5_now:,.0f} > MA20:{ma20_now:,.0f})",
-                    {**ma_data, "signal": "골든크로스", "skip": "거래량부족"})
-                return "SKIP"
             buy_reason = OrderReason.GOLDEN_CROSS
             self._emit(EventType.BUY_EVAL,
                 f"✨ {name} — 골든크로스 확인! 매수 검토 중 "
@@ -667,20 +660,12 @@ class TradingService:
                 f"📈 {name} — 안정적 상승추세 확인! 매수 검토 중 "
                 f"(MA5:{ma5_now:,.0f} > MA20:{ma20_now:,.0f}, 괴리율:{gap:.1f}%)",
                 {**ma_data, "signal": "상승추세", "gap_pct": round(gap, 1), "action": "매수검토"})
-        elif self._check_rsi_reversal(candles, price_data.current_price, ma_result):
-            buy_reason = OrderReason.RSI_REVERSAL
+        elif self._check_momentum_entry(ma_result, price_data.current_price, rsi):
+            buy_reason = OrderReason.MOMENTUM_ENTRY
             self._emit(EventType.BUY_EVAL,
-                f"🔄 {name} — RSI 반등 감지! 과매도에서 회복 중, 매수 검토 "
-                f"(RSI:{rsi:.0f}, 현재가:{price_data.current_price:,}원)",
-                {**ma_data, "signal": "RSI반등", "action": "매수검토"})
-        elif self._check_bollinger_bounce(candles, price_data.current_price, ma_result):
-            buy_reason = OrderReason.BB_BOUNCE
-            bb = self._calculate_bollinger(candles)
-            bb_lower = int(bb[2]) if bb else 0
-            self._emit(EventType.BUY_EVAL,
-                f"📉↗ {name} — 볼린저 밴드 하단 반등! 매수 검토 "
-                f"(하단:{bb_lower:,}원, 현재가:{price_data.current_price:,}원, RSI:{rsi:.0f})",
-                {**ma_data, "signal": "BB반등", "bb_lower": bb_lower, "action": "매수검토"})
+                f"🚀 {name} — 모멘텀 상승 중! 단타 매수 검토 "
+                f"(MA5:{ma5_now:,.0f} > MA20:{ma20_now:,.0f}, RSI:{rsi:.0f})",
+                {**ma_data, "signal": "모멘텀", "action": "매수검토"})
         else:
             rel = ">" if ma5_now > ma20_now else "<"
             gap_pct = round((ma5_now - ma20_now) / ma20_now * 100, 2) if ma20_now > 0 else 0
@@ -690,17 +675,17 @@ class TradingService:
                 {**ma_data, "skip": "MA조건미충족", "ma_gap_pct": gap_pct})
             return "SKIP"
 
-        if buy_reason in (OrderReason.GOLDEN_CROSS, OrderReason.UPTREND_ENTRY):
+        if buy_reason in (OrderReason.GOLDEN_CROSS, OrderReason.UPTREND_ENTRY, OrderReason.MOMENTUM_ENTRY):
             if rsi is not None:
                 if rsi > self._settings.rsi_overbought:
                     self._emit(EventType.BUY_EVAL,
                         f"🔥 {name} — 과열 상태(RSI {rsi:.0f})라 지금 사면 고점 매수 위험이 있어 보류합니다",
                         {**ma_data, "signal": "RSI과매수", "skip": "RSI과열"})
                     return "SKIP"
-                if rsi < self._settings.rsi_oversold:
+                if rsi < 45:
                     self._emit(EventType.BUY_EVAL,
-                        f"❄️ {name} — 너무 많이 떨어진 상태(RSI {rsi:.0f})라 하락 추세일 수 있어 보류합니다",
-                        {**ma_data, "signal": "RSI과매도", "skip": "RSI과냉"})
+                        f"❄️ {name} — 모멘텀 부족(RSI {rsi:.0f}). 올라가는 종목만 사려면 RSI 45 이상이어야 해요",
+                        {**ma_data, "signal": "RSI약함", "skip": "RSI부족"})
                     return "SKIP"
 
         available = await self._order.get_available_cash(stock_code)
@@ -714,7 +699,11 @@ class TradingService:
                 {**ma_data, "skip": "잔액부족", "available": available})
             return "SKIP"
 
-        reason_label = "골든크로스 감지" if buy_reason == OrderReason.GOLDEN_CROSS else "기존 상승추세 진입"
+        reason_label = {
+            OrderReason.GOLDEN_CROSS: "골든크로스",
+            OrderReason.UPTREND_ENTRY: "상승추세",
+            OrderReason.MOMENTUM_ENTRY: "모멘텀 단타",
+        }.get(buy_reason, "매수")
 
         result = await self._order.execute_order(
             stock_code, OrderType.BUY, quantity,
@@ -789,7 +778,7 @@ class TradingService:
                 break
         if cross_day < 0:
             return False
-        if cross_day < self._settings.signal_confirm_days:
+        if cross_day < 1:
             return False
         for j in range(cross_day):
             if ma.ma_short[j] <= ma.ma_long[j]:
@@ -833,39 +822,58 @@ class TradingService:
     def _check_existing_uptrend(
         self, ma: MaResult, candles: list[DailyCandle], current_price: int,
     ) -> bool:
-        """골든크로스 lookback 밖이지만 이미 상승추세에 있는 종목 감지.
+        """상승추세 종목: 이미 올라가고 있는 종목만.
 
         조건:
-        1. MA5 > MA20이 최근 5일 연속 유지 (안정적 상승추세)
-        2. 현재가 > MA20 (장기 평균 위)
-        3. MA20이 상승 추세 (3일 전보다 높음)
-        4. MA5와 MA20의 괴리율 5% 이내 (너무 벌어지면 이미 많이 오른 것)
-        5. 최근 5일 중 거래량이 20일 평균 이상인 날이 2일 이상
+        1. MA5 > MA20이 최근 3일 연속 유지
+        2. 현재가 >= MA5 (모멘텀)
+        3. MA20 상승 추세
+        4. 괴리율 7% 이내
         """
-        if len(ma.ma_short) < 6 or len(ma.ma_long) < 6:
+        if len(ma.ma_short) < 5 or len(ma.ma_long) < 5:
             return False
 
-        for i in range(5):
+        for i in range(3):
             if ma.ma_short[i] <= ma.ma_long[i]:
                 return False
 
-        if current_price <= ma.ma_long[0]:
+        if current_price < ma.ma_short[0]:
             return False
 
         if len(ma.ma_long) > 3 and ma.ma_long[0] <= ma.ma_long[3]:
             return False
 
         gap_pct = (ma.ma_short[0] - ma.ma_long[0]) / ma.ma_long[0] * 100
-        if gap_pct > 5.0:
+        if gap_pct > 7.0:
             return False
 
-        if len(candles) >= 21:
-            vol_avg = sum(c.volume for c in candles[1:21]) / 20
-            if vol_avg > 0:
-                active_days = sum(1 for c in candles[:5] if c.volume >= vol_avg)
-                if active_days < 2:
-                    return False
+        return True
 
+    def _check_momentum_entry(
+        self, ma: MaResult, current_price: int, rsi: float | None,
+    ) -> bool:
+        """모멘텀 단타: 이미 올라가고 있는 종목만 매수.
+
+        조건:
+        1. MA5 > MA20 (상승 추세)
+        2. 현재가 >= MA5 (단기 평균 위 = 모멘텀)
+        3. MA5 상승 중 (3일 전보다 높음)
+        4. 괴리율 7% 이내 (너무 많이 오르지 않음)
+        5. RSI 45-70 (약한 종목 제외, 과열 제외)
+        """
+        if len(ma.ma_short) < 5 or len(ma.ma_long) < 5:
+            return False
+        if ma.ma_short[0] <= ma.ma_long[0]:
+            return False
+        if current_price < ma.ma_short[0]:
+            return False
+        if len(ma.ma_short) >= 4 and ma.ma_short[0] <= ma.ma_short[3]:
+            return False
+        gap_pct = (ma.ma_short[0] - ma.ma_long[0]) / ma.ma_long[0] * 100
+        if gap_pct > 7.0:
+            return False
+        if rsi is not None and (rsi < 45 or rsi > 70):
+            return False
         return True
 
     def _calculate_rsi(self, candles: list[DailyCandle]) -> float | None:
@@ -884,100 +892,6 @@ class TradingService:
             return 100.0
         rs = avg_gain / avg_loss
         return 100 - (100 / (1 + rs))
-
-    def _calculate_rsi_series(self, candles: list[DailyCandle], length: int = 3) -> list[float]:
-        """최근 length일치 RSI를 반환 (index 0 = 오늘)."""
-        period = C.RSI_PERIOD
-        result: list[float] = []
-        for offset in range(length):
-            shifted = candles[offset:]
-            if len(shifted) < period + 1:
-                result.append(50.0)
-                continue
-            gains = [max(shifted[i].close - shifted[i + 1].close, 0) for i in range(period)]
-            losses = [max(shifted[i + 1].close - shifted[i].close, 0) for i in range(period)]
-            avg_gain = sum(gains) / period
-            avg_loss = sum(losses) / period
-            if avg_loss == 0:
-                result.append(100.0)
-            else:
-                rs = avg_gain / avg_loss
-                result.append(100 - (100 / (1 + rs)))
-        return result
-
-    def _calculate_bollinger(self, candles: list[DailyCandle], period: int = 20, num_std: float = 2.0) -> tuple[float, float, float] | None:
-        """볼린저 밴드 (middle, upper, lower) 반환."""
-        if len(candles) < period:
-            return None
-        closes = [c.close for c in candles[:period]]
-        middle = sum(closes) / period
-        variance = sum((c - middle) ** 2 for c in closes) / period
-        std = variance ** 0.5
-        return (middle, middle + num_std * std, middle - num_std * std)
-
-    def _check_rsi_reversal(self, candles: list[DailyCandle], current_price: int, ma: MaResult) -> bool:
-        """RSI 반등 매수: 과매도 → 반등 감지.
-
-        조건:
-        1. 최근 3일 내 RSI가 30 이하였다가 현재 30 이상으로 회복
-        2. 현재 RSI가 30~50 사이 (반등 초기, 아직 과열 아님)
-        3. MA20이 급락 중이 아님 (5일간 -3% 이내)
-        4. 현재가가 MA20의 90% 이상 (너무 멀리 떨어지지 않음)
-        """
-        rsi_series = self._calculate_rsi_series(candles, length=4)
-        if len(rsi_series) < 3:
-            return False
-
-        rsi_now = rsi_series[0]
-        was_oversold = any(r < 30 for r in rsi_series[1:4])
-
-        if not was_oversold:
-            return False
-        if rsi_now < 30 or rsi_now > 50:
-            return False
-
-        if len(ma.ma_long) < 6:
-            return False
-        ma20_slope = (ma.ma_long[0] - ma.ma_long[5]) / ma.ma_long[5] * 100
-        if ma20_slope < -3.0:
-            return False
-
-        if current_price < ma.ma_long[0] * 0.90:
-            return False
-
-        return True
-
-    def _check_bollinger_bounce(self, candles: list[DailyCandle], current_price: int, ma: MaResult) -> bool:
-        """볼린저 밴드 하단 반등 매수.
-
-        조건:
-        1. 최근 3일 내 종가가 하단 밴드 이하였음 (과매도 터치)
-        2. 현재가가 하단 밴드 위로 회복
-        3. RSI가 25~45 사이 (반등 초기)
-        4. MA20이 급락 중이 아님
-        """
-        bb = self._calculate_bollinger(candles)
-        if bb is None:
-            return None
-        middle, upper, lower = bb
-
-        touched_lower = any(candles[i].close <= lower for i in range(1, min(4, len(candles))))
-        if not touched_lower:
-            return False
-        if current_price <= lower:
-            return False
-
-        rsi = self._calculate_rsi(candles)
-        if rsi is None or rsi < 25 or rsi > 45:
-            return False
-
-        if len(ma.ma_long) < 6:
-            return False
-        ma20_slope = (ma.ma_long[0] - ma.ma_long[5]) / ma.ma_long[5] * 100
-        if ma20_slope < -3.0:
-            return False
-
-        return True
 
     def _check_volume_confirmation(self, candles: list[DailyCandle], cross_day_index: int) -> bool:
         if cross_day_index >= len(candles):

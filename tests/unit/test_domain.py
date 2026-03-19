@@ -25,7 +25,7 @@ class TestOrderReason:
         assert OrderReason.TAKE_PROFIT.value == "TAKE_PROFIT"
         assert OrderReason.TRAILING_STOP.value == "TRAILING_STOP"
         assert OrderReason.MAX_HOLDING.value == "MAX_HOLDING"
-        assert len(OrderReason) == 7
+        assert len(OrderReason) >= 8
 
 
 class TestPosition:

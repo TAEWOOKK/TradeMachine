@@ -330,8 +330,7 @@ body{font-family:-apple-system,'Pretendard','Noto Sans KR',sans-serif;background
     <div class="help-item"><span class="hi">익절</span> 수익 +15% 이상이면 목표 달성으로 매도</div>
     <div class="help-item"><span class="hi">트레일링 스탑</span> 고점 대비 4% 하락 시 자동 매도 (수익 보호)</div>
     <div class="help-item"><span class="hi">RSI</span> 과열(70↑)/과냉(30↓) 지표. 적정 구간만 매수</div>
-    <div class="help-item"><span class="hi">RSI 반등</span> RSI 30 이하에서 반등 시 매수 (과매도 회복)</div>
-    <div class="help-item"><span class="hi">볼린저 밴드</span> 하단 밴드 터치 후 반등 시 매수 (평균 회귀)</div>
+    <div class="help-item"><span class="hi">모멘텀 단타</span> 이미 올라가는 종목만 매수 (MA5&gt;MA20, 가격&gt;MA5, RSI 45~70)</div>
     <div class="help-item"><span class="hi">MA5/MA20</span> 5일/20일 이동평균. 교차로 추세 판단</div>
     <div class="help-item"><span class="hi">시장 필터</span> KOSPI 하락세면 신규 매수 중단</div>
   </div>
@@ -388,10 +387,11 @@ function fmtNum(n) { return n!=null ? n.toLocaleString('ko-KR') : '-'; }
 function fmtWon(n) { return n!=null ? n.toLocaleString('ko-KR')+'원' : '-'; }
 
 const REASON_LABEL = {
-  GOLDEN_CROSS: '골든크로스 진입',
-  UPTREND_ENTRY: '상승추세 진입',
-  RSI_REVERSAL: 'RSI 반등 (과매도 회복)',
-  BB_BOUNCE: '볼린저 밴드 반등',
+  GOLDEN_CROSS: '골든크로스',
+  UPTREND_ENTRY: '상승추세',
+  MOMENTUM_ENTRY: '모멘텀 단타',
+  RSI_REVERSAL: 'RSI반등(구)',
+  BB_BOUNCE: 'BB반등(구)',
   DEAD_CROSS: '데드크로스 이탈',
   STOP_LOSS: '손절 (-5% 이하)',
   TAKE_PROFIT: '익절 (목표 달성)',
@@ -616,6 +616,18 @@ function getFilterGroup(type){
   if(type.includes('scan')) return 'scan';
   return 'system';
 }
+/** 매매 필터: 체결·실제 매매 검토만. 분석(skip) 제외. */
+function isTradeFilterMatch(e){
+  if(e.type==='order_exec') return true;
+  if((e.type==='buy_eval'||e.type==='sell_eval') && e.data && e.data.action && !e.data.skip) return true;
+  return false;
+}
+/** 분석 필터: 스캔 시작/종료 + 조건 미달(skip) 이벤트. */
+function isScanFilterMatch(e){
+  if(e.type==='scan_start'||e.type==='scan_end') return true;
+  if((e.type==='buy_eval'||e.type==='sell_eval') && e.data && e.data.skip) return true;
+  return false;
+}
 function getBadgeClass(type){
   const g=getFilterGroup(type);
   return {trade:'badge-trade',scan:'badge-scan',system:'badge-system'}[g]||'badge-system';
@@ -734,9 +746,9 @@ function renderMaSkipLine(d,isClosest){
     const color=pct>=80?'var(--green)':pct>=50?'var(--yellow)':pct>=25?'#f97316':'var(--red)';
     const urgency=absGap<1?'거의 다 왔어요!':absGap<3?'조금 더 올라야 해요':'아직 멀어요';
     let tipText;
-    if(absGap<1) tipText='5일 평균 가격이 20일 평균을 거의 넘었어요. 이대로 오르면 곧 매수 신호(골든크로스)가 발생합니다.';
-    else if(absGap<3) tipText='5일 평균이 20일 평균 아래에 있지만 차이가 줄어드는 중이에요. 주가가 며칠 더 오르면 매수 조건에 도달할 수 있습니다.';
-    else tipText='5일 평균이 20일 평균보다 많이 낮아요. 주가가 꽤 오르거나 시간이 더 지나야 매수 신호가 발생합니다.';
+    if(absGap<1) tipText='5일 평균이 20일 평균을 거의 넘었어요. 이대로 오르면 골든크로스·상승추세·모멘텀 중 첫 조건에 도달할 수 있어요.';
+    else if(absGap<3) tipText='5일 평균이 20일 평균 아래에 있지만 차이가 줄어드는 중이에요. 주가가 며칠 더 오르면 골든크로스가 발생할 수 있습니다.';
+    else tipText='5일 평균이 20일 평균보다 많이 낮아요. 골든크로스가 첫 관문이라, 주가가 꽤 오르거나 시간이 더 지나야 매수 조건에 도달합니다.';
     const tip=`<i class="tip">?<span class="tip-box">${tipText}</span></i>`;
     statusHtml=`<span class="skip-status" style="color:${color}">골든크로스까지 ${absGap.toFixed(1)}% — ${urgency}${tip}</span>`;
     gaugeHtml=`<span class="skip-gauge"><span class="skip-gauge-fill" style="width:${pct}%;background:${color}"></span></span>`
@@ -745,13 +757,13 @@ function renderMaSkipLine(d,isClosest){
     let label,tipText;
     if(gap>5){
       label='괴리율 과다';
-      tipText='5일 평균이 20일 평균보다 5% 넘게 위에 있어요. 이미 많이 오른 상태라 지금 사면 고점 매수가 될 수 있어서 매수하지 않습니다.';
+      tipText='5일 평균이 20일 평균보다 5% 넘게 위에 있어요. 이미 많이 오른 상태라 고점 매수 위험이 있어 보류합니다.';
     } else {
-      label='추세 미확인';
-      tipText='5일 평균이 20일 평균 위에 있지만, 상승추세가 안정적이지 않아요. 20일선이 하락 중이거나, 거래량이 부족하거나, 최근에 교차가 없었을 수 있습니다.';
+      label='상승추세·모멘텀 미확인';
+      tipText='5일선이 20일선 위에 있지만, 골든크로스(1일 유지)·상승추세(3일 연속)·모멘텀(MA5 상승+RSI 45~70) 중 어느 조건도 충족하지 못했어요.';
     }
     const tip=`<i class="tip">?<span class="tip-box">${tipText}</span></i>`;
-    statusHtml=`<span class="skip-status" style="color:var(--blue)">5일선이 위인데 미충족 — ${label}${tip}</span>`;
+    statusHtml=`<span class="skip-status" style="color:var(--blue)">5일선 위인데 미충족 — ${label}${tip}</span>`;
     gaugeHtml=`<span class="skip-gauge"><span class="skip-gauge-fill" style="width:100%;background:var(--blue);opacity:.4"></span></span>`
       +`<span class="skip-ma-sub">5일선 ${fmtNum(d.ma5)} > 20일선 ${fmtNum(d.ma20)} (차이 +${gap.toFixed(1)}%)</span>`;
   }
@@ -793,7 +805,7 @@ function renderSkipGroup(skips){
     const c=maSkips[0].data;
     const g=getGapInfo(c);
     if(g!==null){
-      const label=g<0?`골든크로스까지 ${Math.abs(g).toFixed(1)}%`:`넘었지만 추세 미확인`;
+      const label=g<0?`골든크로스까지 ${Math.abs(g).toFixed(1)}%`:`5일선 위인데 상승추세·모멘텀 미확인`;
       closestHtml=`<span class="skip-closest">가장 근접: ${c.name||c.code} · ${label}</span>`;
     }
   }
@@ -847,7 +859,11 @@ function renderSingleEvent(e){
 
 function renderEvents(){
   const el=$('event-log');
-  const filtered = activeFilter==='all' ? events : events.filter(e=>getFilterGroup(e.type)===activeFilter);
+  let filtered;
+  if(activeFilter==='all') filtered=events;
+  else if(activeFilter==='trade') filtered=events.filter(isTradeFilterMatch);
+  else if(activeFilter==='scan') filtered=events.filter(isScanFilterMatch);
+  else filtered=events.filter(e=>getFilterGroup(e.type)===activeFilter);
   if(filtered.length===0){
     el.innerHTML='<div class="log-empty">'+(activeFilter==='all'?'봇이 활동을 시작하면 여기에 표시돼요':'해당 유형의 이벤트가 없습니다')+'</div>';
     return;
