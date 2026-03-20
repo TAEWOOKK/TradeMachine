@@ -1,0 +1,34 @@
+---
+description: 매매 전략/로직 변경 시 strategy-changelog.md 업데이트 안내
+globs: app/service/trading_service.py, app/repository/order_repository.py, app/config/settings.py, app/config/constants.py
+alwaysApply: false
+---
+
+# 전략 변경 시 Changelog 업데이트
+
+매매 전략·조건·파라미터를 수정할 때는 **반드시** `docs/strategy-changelog.md`를 함께 갱신한다.
+
+## 적용 대상
+
+- `app/service/trading_service.py` — 매수/매도 판단 로직
+- `app/repository/order_repository.py` — 잔고·계좌·주문 관련 로직
+- `app/config/settings.py` — 전략 파라미터 (RSI, 손절, 익절, 투자비율 등)
+- `app/config/constants.py` — MA 기간, 수수료, 품질 필터 등
+
+## 갱신 방법
+
+1. **§3 변경 사항 및 결과**에 새 항목 추가
+2. **변경 전/후**, **변경 이유**, **변경 결과**, **관련 파일** 기록
+3. **§4 현재 전략 상태** 스냅샷 갱신
+4. **§변경 이력**에 오늘 날짜와 요약 추가
+
+## 제외 대상
+
+- UI·대시보드·차트
+- API 엔드포인트·라우터
+- 로깅 형식·에러 메시지
+- 인프라·스케줄러 설정
+
+## 참고
+
+- 상세 형식: `docs/strategy-changelog.md` §5 향후 업데이트 방법

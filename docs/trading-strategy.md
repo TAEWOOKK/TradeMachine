@@ -2,6 +2,8 @@
 
 > TradeMachine의 핵심인 규칙 기반(Rule-based) 스윙 트레이딩 전략을 정의한 문서.
 > 모든 매매는 이 문서의 조건에 따라 기계적으로 실행된다.
+>
+> **변경 이력**: 설계→구현→변경→결과를 기록한 일지는 [strategy-changelog.md](./strategy-changelog.md) 참조.
 
 ---
 
