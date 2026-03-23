@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from datetime import datetime
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
+
+logger = logging.getLogger(__name__)
 from fastapi.responses import HTMLResponse, StreamingResponse
 
 from app.config import constants as C
@@ -78,6 +81,74 @@ async def get_status(
         status["total_assets"] = yesterday.get("total_assets", 0)
 
     return status
+
+
+@router.get("/api/asset-breakdown")
+async def get_asset_breakdown(
+    svc: TradingService = Depends(get_trading_service),
+    order_log_repo: OrderLogRepository = Depends(get_order_log_repo),
+    report_repo: ReportRepository = Depends(get_report_repo),
+) -> dict:
+    """총 자산과 누적손익의 차이를 설명하는 상세 breakdown (수수료·세금·입출금 등)."""
+    today = datetime.now().strftime("%Y-%m-%d")
+    cumulative_pnl = 0
+    baseline = 0
+    deposit_sum = 0
+    fees_total = 0
+    fees_breakdown = {"buy_fee": 0, "sell_fee": 0, "sell_tax": 0}
+
+    try:
+        realized = await order_log_repo.get_today_realized_pnl(today)
+        yesterday = await report_repo.get_yesterday_report(today)
+        prev_cumulative = yesterday.get("cumulative_pnl", 0) if yesterday else 0
+        cumulative_pnl = prev_cumulative + realized["total_pnl"]
+    except Exception as e:
+        logger.warning("asset-breakdown: cumulative_pnl 실패: %s", e)
+
+    try:
+        fees = await order_log_repo.get_estimated_fees_taxes()
+        fees_total = fees["total"]
+        fees_breakdown = {
+            "buy_fee": fees["buy_fee"],
+            "sell_fee": fees["sell_fee"],
+            "sell_tax": fees["sell_tax"],
+        }
+    except Exception as e:
+        logger.warning("asset-breakdown: fees 실패: %s", e)
+
+    try:
+        deposit_sum = await report_repo.get_deposit_withdrawal_sum()
+    except Exception as e:
+        logger.warning("asset-breakdown: deposit_withdrawal 실패: %s", e)
+
+    try:
+        first_report = await report_repo.get_first_report()
+        baseline = first_report.get("total_assets", 0) if first_report else 0
+    except Exception as e:
+        logger.warning("asset-breakdown: baseline 실패: %s", e)
+
+    total_assets = 0
+    try:
+        acct = svc.status
+        total_assets = acct.get("total_assets", 0)
+        if total_assets <= 0:
+            yesterday = await report_repo.get_yesterday_report(today)
+            if yesterday:
+                total_assets = yesterday.get("total_assets", 0)
+    except Exception as e:
+        logger.warning("asset-breakdown: total_assets 실패: %s", e)
+
+    other_diff = total_assets - baseline - cumulative_pnl + fees_total - deposit_sum
+
+    return {
+        "total_assets": total_assets,
+        "cumulative_pnl": cumulative_pnl,
+        "estimated_fees_taxes": fees_total,
+        "estimated_breakdown": fees_breakdown,
+        "deposit_withdrawal_sum": deposit_sum,
+        "baseline_assets": baseline,
+        "other_diff": other_diff,
+    }
 
 
 @router.get("/api/positions")

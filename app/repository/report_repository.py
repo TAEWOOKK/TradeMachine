@@ -69,6 +69,22 @@ class ReportRepository:
             (today,),
         )
 
+    async def get_first_report(self) -> dict | None:
+        """가장 첫 기록일 리포트 반환 (자산 흐름 기준점용)."""
+        return await self._db.fetch_one(
+            "SELECT * FROM daily_reports ORDER BY report_date ASC LIMIT 1",
+        )
+
+    async def get_deposit_withdrawal_sum(self, days: int = 365) -> int:
+        """입출금 합계 (양수=입금, 음수=출금)."""
+        cutoff = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+        row = await self._db.fetch_one(
+            """SELECT COALESCE(SUM(amount), 0) AS total
+               FROM capital_events WHERE event_date >= ?""",
+            (cutoff,),
+        )
+        return int(row["total"]) if row and row["total"] is not None else 0
+
     async def get_performance_history(self, days: int = 90) -> list[dict]:
         cutoff = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
         return await self._db.fetch_all(

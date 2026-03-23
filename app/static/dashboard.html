@@ -351,11 +351,17 @@ body{font-family:-apple-system,'Pretendard','Noto Sans KR',sans-serif;background
   <div class="section">
     <div class="right-tabs">
       <div class="right-tab active" data-panel="trades" onclick="switchRightTab(this)">매매 내역 <span class="tab-badge" id="trade-count-badge" style="background:var(--blue-bg,rgba(59,130,246,.15));color:var(--blue)">0</span></div>
+      <div class="right-tab" data-panel="breakdown" onclick="switchRightTab(this);onBreakdownTabClick()">📊 손익 상세</div>
       <div class="right-tab" data-panel="errors" onclick="switchRightTab(this)">⚠️ 문제 알림 <span class="tab-badge" id="error-count-badge" style="background:var(--red-bg);color:var(--red)">0</span></div>
     </div>
     <div id="panel-trades" class="right-panel-body active">
       <div id="trade-list" class="trade-list">
         <div class="trade-empty">아직 매매 내역이 없어요</div>
+      </div>
+    </div>
+    <div id="panel-breakdown" class="right-panel-body">
+      <div id="asset-breakdown-content" style="color:var(--text-sec);font-size:13px;padding:8px 0">
+        <span style="color:var(--text-dim)">탭을 선택하면 자산 흐름 상세를 불러옵니다</span>
       </div>
     </div>
     <div id="panel-errors" class="right-panel-body">
@@ -385,7 +391,7 @@ body{font-family:-apple-system,'Pretendard','Noto Sans KR',sans-serif;background
 <!-- 수동 매도 모달 -->
 <div id="sell-modal" class="modal-overlay" onclick="if(event.target===this)closeSellModal()">
   <div class="modal" onclick="event.stopPropagation()">
-    <div class="modal-title">✋ 수동 매도</div>
+    <div class="modal-title">✋ 매도</div>
     <div id="sell-modal-body"></div>
     <div class="modal-btns">
       <button class="modal-btn cancel" onclick="closeSellModal()">취소</button>
@@ -764,6 +770,7 @@ const REASON_LABEL = {
   TAKE_PROFIT: '익절 (목표 달성)',
   TRAILING_STOP: '트레일링 스탑 (고점 대비 하락)',
   MAX_HOLDING: '최대 보유 기간 초과',
+  FRIDAY_CLOSE: '주말 대비 청산',
   MANUAL: '수동 매도',
 };
 
@@ -914,6 +921,50 @@ function updateStatus(s) {
   updateCountdown();
 }
 
+let assetBreakdownLoaded = false;
+function onBreakdownTabClick(){
+  if(assetBreakdownLoaded) return;
+  loadAssetBreakdown();
+}
+async function loadAssetBreakdown(){
+  const content = $('asset-breakdown-content');
+  content.innerHTML = '<span style="color:var(--text-dim)">불러오는 중...</span>';
+  try{
+    const res = await fetch('/api/asset-breakdown');
+    let d = null;
+    if(res.ok){
+      try{ d = await res.json(); }catch(_){ d = null; }
+    }
+    if(!d || typeof d.total_assets === 'undefined'){
+      const err = res.status ? ' (HTTP '+res.status+')' : '';
+      content.innerHTML = '<span style="color:var(--blue)">데이터를 불러올 수 없어요'+err+'</span>';
+      return;
+    }
+    const fmt=(v)=> (v>=0?'+':'')+v.toLocaleString()+'원';
+    const base = d.baseline_assets||0;
+    const pnl = d.cumulative_pnl||0;
+    const fees = d.estimated_fees_taxes||0;
+    const dw = d.deposit_withdrawal_sum||0;
+    const other = d.other_diff||0;
+    const total = d.total_assets||0;
+    content.innerHTML = `
+      <div style="font-weight:600;margin-bottom:10px">자산 흐름 상세</div>
+      <table style="width:100%;border-collapse:collapse;font-size:12px">
+        <tr><td style="padding:4px 8px 2px 0">기준 자산 (첫 기록일)</td><td style="text-align:right">${base.toLocaleString()}원</td></tr>
+        <tr><td style="padding:2px 8px 2px 0">매매 손익 (실현)</td><td style="text-align:right;color:${pnl>=0?'var(--red)':'var(--blue)'}">${fmt(pnl)}</td></tr>
+        <tr><td style="padding:2px 8px 2px 0">추정 수수료·세금</td><td style="text-align:right;color:var(--blue)">-${fees.toLocaleString()}원</td></tr>
+        <tr><td style="padding:2px 8px 2px 0">입출금 합계</td><td style="text-align:right;color:${dw>=0?'var(--red)':'var(--blue)'}">${fmt(dw)}</td></tr>
+        <tr><td style="padding:2px 8px 2px 0;border-top:1px solid var(--border)">기타 (슬리피지·반올림 등)</td><td style="text-align:right;border-top:1px solid var(--border);color:${other>=0?'var(--red)':'var(--blue)'}">${fmt(other)}</td></tr>
+        <tr><td style="padding:6px 8px 2px 0;font-weight:600">총 자산 (실제)</td><td style="text-align:right;font-weight:600">${total.toLocaleString()}원</td></tr>
+      </table>
+      <div style="margin-top:10px;font-size:11px;color:var(--text-dim)">매매 손익은 (매도가-매수가)만 반영. 수수료·세금은 실제 계좌에서 차감되어 총 자산에 반영됩니다.</div>
+    `;
+    assetBreakdownLoaded = true;
+  }catch(e){
+    content.innerHTML = '<span style="color:var(--blue)">오류가 발생했어요</span>';
+  }
+}
+
 function updateCountdown(){
   const cdLabel = $('countdown-label');
   const cdValue = $('countdown');
@@ -977,7 +1028,7 @@ function updatePositions(positions) {
     </div><div class="pos-profit">
       <div class="pos-pct ${cls}">${s}${p.profit_rate.toFixed(2)}%</div>
       <div class="pos-amt ${cls}">${s}${fmtWon(p.profit_amount)}</div>
-      <button class="pos-btn sell pos-sell-btn" onclick="openSellModal('${p.stock_code}')">✋ 수동 매도</button>
+      <button class="pos-btn sell pos-sell-btn" onclick="openSellModal('${p.stock_code}')">매도</button>
     </div></div>`;
   }).join('');
 }

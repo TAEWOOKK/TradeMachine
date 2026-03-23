@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 from datetime import datetime
 
+from app.config import constants as C
 from app.core.database import Database
 from app.model.domain import OrderReason, OrderResult, OrderType
 
@@ -136,6 +137,30 @@ class OrderLogRepository:
                 "pnl": pnl,
             })
         return {"total_pnl": total_pnl, "trades": trades}
+
+    async def get_estimated_fees_taxes(self) -> dict:
+        """전체 매매 내역 기준 추정 수수료·세금 합계 (누적)."""
+        rows = await self._db.fetch_all(
+            """
+            SELECT order_type, quantity, price
+            FROM orders WHERE success = 1 AND order_type IN ('BUY', 'SELL')
+            """,
+        )
+        buy_fee = sell_fee = sell_tax = 0
+        for r in rows:
+            amount = r["quantity"] * r["price"]
+            if r["order_type"] == "BUY":
+                buy_fee += int(amount * C.BUY_FEE_RATE)
+            else:
+                sell_fee += int(amount * C.SELL_FEE_RATE)
+                sell_tax += int(amount * C.SELL_TAX_RATE)
+        total = buy_fee + sell_fee + sell_tax
+        return {
+            "buy_fee": buy_fee,
+            "sell_fee": sell_fee,
+            "sell_tax": sell_tax,
+            "total": total,
+        }
 
     async def get_recent_orders(self, limit: int = 50) -> list[dict]:
         """최근 매매 내역(성공 건만) 반환."""

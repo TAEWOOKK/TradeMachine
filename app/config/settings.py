@@ -40,6 +40,9 @@ class Settings(BaseSettings):
 
     enable_market_filter: bool = True
 
+    # 주말 갭 리스크 방지: 금요일 장 마감 직전 보유 종목 전량 청산
+    friday_close_enabled: bool = True
+
     @property
     def watch_list_codes(self) -> list[str]:
         return [c.strip() for c in self.watch_list.split(",") if c.strip()]

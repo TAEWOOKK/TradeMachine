@@ -26,6 +26,7 @@ _REASON_KR = {
     OrderReason.TAKE_PROFIT: "익절 (목표 수익 달성)",
     OrderReason.TRAILING_STOP: "트레일링 스탑 (고점 대비 하락)",
     OrderReason.MAX_HOLDING: "보유 기간 초과",
+    OrderReason.FRIDAY_CLOSE: "주말 대비 청산",
     OrderReason.DEAD_CROSS: "하락 신호 (데드크로스)",
     OrderReason.GOLDEN_CROSS: "상승 신호 (골든크로스)",
     OrderReason.UPTREND_ENTRY: "기존 상승추세 진입",
@@ -560,12 +561,7 @@ class TradingService:
                     signal="데드크로스", action="매도완료" if sold else "매도실패"))
             return "SOLD" if sold else "HOLD"
 
-        profit_str = f"{real_profit:+.1f}%"
-        price_str = f"{cur:,}원"
-        self._emit(EventType.SELL_EVAL,
-            f"💎 {name} — 계속 보유합니다 (수익률 {profit_str}, 현재가 {price_str})",
-            self._stock_data(pos.stock_code, cur, profit=round(real_profit, 2),
-                avg_price=int(pos.avg_price), qty=pos.quantity, action="HOLD"))
+        # 매도 조건 없음 → 계속 보유 (로그 생략)
         return "HOLD"
 
     # ── _evaluate_buy ──
@@ -1067,6 +1063,50 @@ class TradingService:
             logger.exception("run_pre_market 오류")
             self._emit(EventType.ERROR, "⚠️ 장 시작 준비 중 오류 발생")
             self._phase = "WAITING_MARKET"
+
+    # ── run_friday_close ──
+
+    async def run_friday_close(self) -> None:
+        """금요일 장 마감 직전(15:00) 보유 종목 전량 청산. 주말 갭 다운 리스크 방지."""
+        if not self._settings.friday_close_enabled:
+            return
+        now = datetime.now()
+        today_ymd = now.strftime("%Y%m%d")
+        if today_ymd in C.KRX_HOLIDAYS:
+            return
+        if now.weekday() != 4:
+            return
+
+        self._phase = "FRIDAY_CLOSE"
+        self._emit(EventType.PRE_MARKET, "📅 금요일 — 주말 대비 보유 종목 청산 중...")
+
+        positions = await self._order.get_balance() or []
+        if not positions:
+            msg = "📅 금요일 청산 완료 — 보유 종목 없음"
+            trade_logger.info(msg)
+            self._emit(EventType.PRE_MARKET, msg)
+            self._phase = "IDLE"
+            return
+
+        sell_count = 0
+        for pos in positions:
+            try:
+                price_data = await self._market.get_current_price(pos.stock_code)
+                cur = price_data.current_price if price_data.current_price > 0 else int(pos.avg_price)
+                sold = await self._execute_sell(pos, OrderReason.FRIDAY_CLOSE, cur)
+                if sold:
+                    sell_count += 1
+                    await self._cleanup_trailing(pos.stock_code)
+            except Exception:
+                logger.exception("금요일 청산 중 %s 매도 오류", pos.stock_code)
+
+        if sell_count > 0:
+            await self.refresh_holdings()
+
+        msg = f"📅 금요일 청산 완료 — {sell_count}/{len(positions)}종목 매도 (주말 갭 리스크 방지)"
+        trade_logger.info(msg)
+        self._emit(EventType.PRE_MARKET, msg, {"sold": sell_count, "total": len(positions)})
+        self._phase = "IDLE"
 
     # ── run_post_market ──
 
