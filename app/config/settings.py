@@ -31,12 +31,19 @@ class Settings(BaseSettings):
     max_investment_ratio: float = 1.0  # (레거시) 1.0=미사용. 종목당 투자는 가용금/목표종목수로 계산
     max_holding_count: int = 0  # 0 = 제한 없음
     max_daily_buy_count: int = 3
-    max_holding_days: int = 20
-    stop_loss_rate: float = -5.0
-    take_profit_rate: float = 15.0
-    trailing_stop_activate: float = 8.0
-    trailing_stop_rate: float = 4.0
+    max_holding_days: int = 2  # 단타: 2영업일
+    stop_loss_rate: float = -2.0  # 단타: -2%
+    take_profit_rate: float = 2.0  # 단타: +2%
+    trailing_stop_activate: float = 1.5  # 단타: +1.5%에서 트레일링 활성화
+    trailing_stop_rate: float = 0.8  # 단타: 고점 대비 0.8% 하락 시 매도
     rebuy_cooldown_hours: int = 24
+
+    # 단타 진입 필터
+    scalping_entry_minute: int = 25  # 장 시작 후 N분 이후 매수 (0=제한없음)
+    min_intraday_change: float = 0.3  # 전일대비 최소 상승률 (%)
+    max_intraday_change: float = 4.0  # 전일대비 최대 상승률 (%)
+    rsi_scalping_min: int = 50  # 단타 RSI 하한
+    rsi_scalping_max: int = 65  # 단타 RSI 상한
 
     enable_market_filter: bool = True
 

@@ -42,6 +42,11 @@ def mock_settings():
     s.trailing_stop_activate = 8.0
     s.trailing_stop_rate = 4.0
     s.rebuy_cooldown_hours = 24
+    s.scalping_entry_minute = 0  # 테스트에서 시간 제한 비활성화
+    s.min_intraday_change = 0.3
+    s.max_intraday_change = 4.0
+    s.rsi_scalping_min = 50
+    s.rsi_scalping_max = 65
     s.enable_market_filter = True
     return s
 

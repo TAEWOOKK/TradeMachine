@@ -78,7 +78,7 @@ CREATE TABLE orders (
     created_at      TEXT    NOT NULL,    -- YYYY-MM-DD HH:MM:SS
     stock_code      TEXT    NOT NULL,    -- 종목코드 (005930)
     order_type      TEXT    NOT NULL,    -- BUY / SELL
-    order_reason    TEXT    NOT NULL,    -- GOLDEN_CROSS / UPTREND_ENTRY / STOP_LOSS / TAKE_PROFIT / TRAILING_STOP / MAX_HOLDING / DEAD_CROSS
+    order_reason    TEXT    NOT NULL,    -- GOLDEN_CROSS / UPTREND_ENTRY / MOMENTUM_ENTRY / SCALPING_ENTRY / STOP_LOSS / TAKE_PROFIT / ...
     order_method    TEXT    NOT NULL DEFAULT 'MARKET',  -- MARKET(시장가) / LIMIT(지정가)
     quantity        INTEGER NOT NULL,    -- 주문 수량
     price           INTEGER NOT NULL,    -- 주문 가격 (시장가면 0)

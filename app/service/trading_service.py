@@ -30,6 +30,7 @@ _REASON_KR = {
     OrderReason.DEAD_CROSS: "하락 신호 (데드크로스)",
     OrderReason.GOLDEN_CROSS: "상승 신호 (골든크로스)",
     OrderReason.UPTREND_ENTRY: "기존 상승추세 진입",
+    OrderReason.SCALPING_ENTRY: "단타 진입 (오르는 종목)",
 }
 
 
@@ -596,6 +597,19 @@ class TradingService:
         if not market_ok:
             return "SKIP"
 
+        # 단타: 장 초반 매수 보류 (변동성 완화 대기)
+        if self._settings.scalping_entry_minute > 0:
+            now = datetime.now()
+            market_open = now.replace(hour=9, minute=0, second=0, microsecond=0)
+            if now < market_open:
+                return "SKIP"
+            mins_since_open = (now - market_open).total_seconds() / 60
+            if mins_since_open < self._settings.scalping_entry_minute:
+                self._emit(EventType.BUY_EVAL,
+                    f"⏰ {stock_fmt(stock_code)} — 장 시작 후 {self._settings.scalping_entry_minute}분 경과 전이라 매수 보류",
+                    self._stock_data(stock_code, 0, skip="장초반대기"))
+                return "SKIP"
+
         price_data = await self._market.get_current_price(stock_code)
 
         if price_data.is_stopped or price_data.is_managed:
@@ -646,6 +660,24 @@ class TradingService:
                 self._stock_data(stock_code, price_data.current_price, skip="상한가"))
             return "SKIP"
 
+        # 단타: 전일 대비 등락률 필터 — "오르는 종목"만 진입
+        cr = price_data.change_rate
+        if cr < self._settings.min_intraday_change:
+            self._emit(EventType.BUY_EVAL,
+                f"📉 {name} — 전일대비 {cr:+.1f}%로 상승 미흡 (최소 {self._settings.min_intraday_change}%)",
+                self._stock_data(stock_code, price_data.current_price, skip="상승미흡", change_rate=cr))
+            return "SKIP"
+        if cr > self._settings.max_intraday_change:
+            self._emit(EventType.BUY_EVAL,
+                f"🔥 {name} — 전일대비 {cr:+.1f}%로 이미 과열 (최대 {self._settings.max_intraday_change}%)",
+                self._stock_data(stock_code, price_data.current_price, skip="과열", change_rate=cr))
+            return "SKIP"
+        if cr < 0:
+            self._emit(EventType.BUY_EVAL,
+                f"📉 {name} — 전일대비 {cr:+.1f}% 하락 중이라 매수 보류",
+                self._stock_data(stock_code, price_data.current_price, skip="하락중", change_rate=cr))
+            return "SKIP"
+
         last_sell = await self._order_log.get_last_sell_time(stock_code)
         if last_sell:
             hours_since = (datetime.now() - last_sell).total_seconds() / 3600
@@ -662,8 +694,6 @@ class TradingService:
 
         ma_result = self._calculate_ma(candles)
 
-        buy_reason: OrderReason | None = None
-
         ma5_now = ma_result.ma_short[0] if ma_result.ma_short else 0
         ma20_now = ma_result.ma_long[0] if ma_result.ma_long else 0
         rsi = self._calculate_rsi(candles)
@@ -672,33 +702,34 @@ class TradingService:
             rsi=round(rsi, 1) if rsi else None,
             change_rate=price_data.change_rate)
 
-        if self._check_golden_cross(ma_result, price_data.current_price):
-            buy_reason = OrderReason.GOLDEN_CROSS
-        elif self._check_existing_uptrend(ma_result, candles, price_data.current_price):
-            buy_reason = OrderReason.UPTREND_ENTRY
-        elif self._check_momentum_entry(ma_result, price_data.current_price, rsi):
-            buy_reason = OrderReason.MOMENTUM_ENTRY
+        # 단타: SCALPING_ENTRY만 사용 (오르는 종목 + 상승 추세 + RSI)
+        if self._check_scalping_entry(ma_result, price_data.current_price, rsi):
+            buy_reason = OrderReason.SCALPING_ENTRY
         else:
             rel = ">" if ma5_now > ma20_now else "<"
             gap_pct = round((ma5_now - ma20_now) / ma20_now * 100, 2) if ma20_now > 0 else 0
             self._emit(EventType.BUY_EVAL,
-                f"📊 {name} ({price_data.current_price:,}원) — 매수 조건 미충족 "
-                f"(MA5:{ma5_now:,.0f} {rel} MA20:{ma20_now:,.0f}, 괴리율:{gap_pct:+.2f}%)",
-                {**ma_data, "skip": "MA조건미충족", "ma_gap_pct": gap_pct})
+                f"📊 {name} ({price_data.current_price:,}원) — 단타 조건 미충족 "
+                f"(MA5:{ma5_now:,.0f} {rel} MA20:{ma20_now:,.0f}, 괴리율:{gap_pct:+.2f}%, RSI:{(f'{rsi:.0f}' if rsi is not None else '-')})",
+                {**ma_data, "skip": "단타조건미충족", "ma_gap_pct": gap_pct})
             return "SKIP"
 
-        if buy_reason in (OrderReason.GOLDEN_CROSS, OrderReason.UPTREND_ENTRY, OrderReason.MOMENTUM_ENTRY):
-            if rsi is not None:
-                if rsi > self._settings.rsi_overbought:
-                    self._emit(EventType.BUY_EVAL,
-                        f"🔥 {name} — 골든크로스 확인했으나 RSI 과열({rsi:.0f})로 매수 보류",
-                        {**ma_data, "signal": "RSI과매수", "skip": "RSI과열", "action": "매수보류"})
-                    return "SKIP"
-                if rsi < 45:
-                    self._emit(EventType.BUY_EVAL,
-                        f"❄️ {name} — 골든크로스 확인했으나 RSI 부족({rsi:.0f})로 매수 보류",
-                        {**ma_data, "signal": "RSI약함", "skip": "RSI부족", "action": "매수보류"})
-                    return "SKIP"
+        # RSI 범위 확인 (단타: 50~65, RSI 없으면 SKIP)
+        if rsi is None:
+            self._emit(EventType.BUY_EVAL,
+                f"📊 {name} — RSI 계산 불가 (데이터 부족)로 매수 보류",
+                {**ma_data, "skip": "RSI불가"})
+            return "SKIP"
+        if rsi < self._settings.rsi_scalping_min:
+            self._emit(EventType.BUY_EVAL,
+                f"❄️ {name} — RSI {rsi:.0f}로 모멘텀 부족 (최소 {self._settings.rsi_scalping_min})",
+                {**ma_data, "skip": "RSI부족", "rsi": rsi})
+            return "SKIP"
+        if rsi > self._settings.rsi_scalping_max:
+            self._emit(EventType.BUY_EVAL,
+                f"🔥 {name} — RSI {rsi:.0f}로 과열 (최대 {self._settings.rsi_scalping_max})",
+                {**ma_data, "skip": "RSI과열", "rsi": rsi})
+            return "SKIP"
 
         price_with_fee = price_data.current_price * (1 + C.BUY_FEE_RATE)
         acct = self._last_account_summary or await self._order.get_account_summary()
@@ -742,6 +773,7 @@ class TradingService:
             OrderReason.GOLDEN_CROSS: "골든크로스",
             OrderReason.UPTREND_ENTRY: "상승추세",
             OrderReason.MOMENTUM_ENTRY: "모멘텀 단타",
+            OrderReason.SCALPING_ENTRY: "단타 (오르는 종목)",
         }.get(buy_reason, "매수")
 
         rsi_str = f", RSI:{rsi:.0f}" if rsi is not None else ""
@@ -929,6 +961,25 @@ class TradingService:
         if gap_pct > 7.0:
             return False
         if rsi is not None and (rsi < 45 or rsi > 70):
+            return False
+        return True
+
+    def _check_scalping_entry(
+        self, ma: MaResult, current_price: int, rsi: float | None,
+    ) -> bool:
+        """단타 진입: 오르는 종목 + 상승 추세.
+
+        조건 (change_rate 필터는 호출 전에 적용됨):
+        1. MA5 > MA20 최근 3일 연속 유지
+        2. 현재가 >= MA5 (모멘텀)
+        3. RSI는 호출 후 별도 체크 (50~65)
+        """
+        if len(ma.ma_short) < 4 or len(ma.ma_long) < 4:
+            return False
+        for i in range(3):
+            if ma.ma_short[i] <= ma.ma_long[i]:
+                return False
+        if current_price < ma.ma_short[0]:
             return False
         return True
 

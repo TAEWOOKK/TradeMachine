@@ -149,6 +149,7 @@ async def test_buy_on_golden_cross(mock_settings):
     market_repo.get_daily_chart.side_effect = _get_chart
 
     order_repo = AsyncMock()
+    order_repo.get_account_summary = AsyncMock(return_value={"total_cash": 10_000_000})
     order_repo.get_available_cash.return_value = 10_000_000
     order_repo.execute_order.return_value = OrderResult(
         success=True, order_no="BUY001", error_message=None,
@@ -180,7 +181,7 @@ async def test_buy_on_golden_cross(mock_settings):
 
     order_log_repo.save_order.assert_called_once()
     saved_reason = order_log_repo.save_order.call_args[0][2]
-    assert saved_reason == OrderReason.GOLDEN_CROSS
+    assert saved_reason == OrderReason.SCALPING_ENTRY
 
 
 # ──────────────────────────────────────────────────────────────────────

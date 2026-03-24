@@ -73,11 +73,11 @@ class Settings(BaseSettings):
     max_investment_ratio: float = 0.1
     max_holding_count: int = 5
     max_daily_buy_count: int = 3
-    max_holding_days: int = 20
-    stop_loss_rate: float = -5.0
-    take_profit_rate: float = 15.0
-    trailing_stop_activate: float = 8.0
-    trailing_stop_rate: float = 4.0
+    max_holding_days: int = 2        # 단타
+    stop_loss_rate: float = -2.0    # 단타
+    take_profit_rate: float = 2.0   # 단타
+    trailing_stop_activate: float = 1.5  # 단타
+    trailing_stop_rate: float = 0.8  # 단타
     rebuy_cooldown_hours: int = 24
 
     # 시장 필터
