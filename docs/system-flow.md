@@ -96,7 +96,7 @@ FastAPI 서버 기동, 외부 의존성 연결, 스케줄러 등록
 [F0-5] APScheduler 등록 + 휴장일 처리
   │  Job 1: 장 시작 전 준비 → cron 08:50 (월~금)
   │  Job 2: 스캔 사이클 → cron 09:00~15:25, */5분 (월~금), max_instances=1
-  │  Job 2.5: 금요일 전량 청산 → cron 15:28 (금요일만), max_instances=1
+  │  Job 2.5: 장마감 전량 청산 → cron 15:28 (월~금), max_instances=1
   │  Job 3: 장 마감 처리 → cron 15:30 (월~금)
   │
   │  ※ 휴장일·공휴일·주말 처리 (3단계 방어):

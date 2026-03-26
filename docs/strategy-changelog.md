@@ -50,6 +50,26 @@ FROM orders ORDER BY created_at;
 
 ---
 
+### 2026-03-26 · 전략 문서·코드 정합성
+
+| 항목 | 내용 |
+|------|------|
+| 매수 필터 순서 | 전일대비 `change_rate` 에 대해 **하락(<0) → 상승 미흡 → 과열** 순으로 검사, SKIP 메시지와 분기 일치 |
+| trading-strategy.md | §2.4 전일대비(`prdy_ctrt`) 한계, §2.5 EOD vs `MAX_HOLDING_DAYS` 역할 명시 |
+| README.md | 단타 전략 요약·스캔 시간(09:25 이후 매수) 반영 |
+
+---
+
+### 2026-03-25 · 장마감 청산: 금요일만 → 매 영업일
+
+| 항목 | 변경 전 | 변경 후 |
+|------|---------|---------|
+| 스케줄 | 금요일 15:28만 | **월~금 15:28** 전량 매도 |
+| 설정 키 | `FRIDAY_CLOSE_ENABLED` | `EOD_CLOSE_ENABLED` (구 키도 pydantic 별칭으로 인식) |
+| OrderReason | `FRIDAY_CLOSE` | **`EOD_CLOSE`** (기존 DB의 FRIDAY_CLOSE 유지) |
+
+---
+
 ### 2026-03-24 · 스윙 → 단타 전략 전환
 
 #### 변경 사유

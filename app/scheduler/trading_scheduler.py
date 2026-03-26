@@ -31,9 +31,9 @@ class TradingScheduler:
             id="scan_cycle_closing", replace_existing=True, max_instances=1,
         )
         self._scheduler.add_job(
-            self._service.run_friday_close,
-            "cron", hour=15, minute=28, day_of_week="fri",
-            id="friday_close", replace_existing=True, max_instances=1,
+            self._service.run_eod_close,
+            "cron", hour=15, minute=28, day_of_week="mon-fri",
+            id="eod_close", replace_existing=True, max_instances=1,
         )
         self._scheduler.add_job(
             self._service.run_post_market,

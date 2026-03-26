@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from pydantic import field_validator
+from pydantic import AliasChoices, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env")
+    model_config = SettingsConfigDict(env_file=".env", populate_by_name=True)
 
     # ── Tier 1: .env 필수 (비밀키·환경) ──
     kis_app_key: str
@@ -47,8 +47,12 @@ class Settings(BaseSettings):
 
     enable_market_filter: bool = True
 
-    # 주말 갭 리스크 방지: 금요일 장 마감 직전 보유 종목 전량 청산
-    friday_close_enabled: bool = True
+    # 매 영업일 장 마감 직전(15:28) 보유 전량 청산 — 야간·익일 갭 리스크 회피
+    # .env: EOD_CLOSE_ENABLED (구 FRIDAY_CLOSE_ENABLED 도 인식)
+    eod_close_enabled: bool = Field(
+        default=True,
+        validation_alias=AliasChoices("eod_close_enabled", "friday_close_enabled"),
+    )
 
     @property
     def watch_list_codes(self) -> list[str]:

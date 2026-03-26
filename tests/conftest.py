@@ -48,6 +48,7 @@ def mock_settings():
     s.rsi_scalping_min = 50
     s.rsi_scalping_max = 65
     s.enable_market_filter = True
+    s.eod_close_enabled = True
     return s
 
 

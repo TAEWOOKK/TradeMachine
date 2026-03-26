@@ -19,7 +19,8 @@ class OrderReason(str, Enum):
     TAKE_PROFIT = "TAKE_PROFIT"
     TRAILING_STOP = "TRAILING_STOP"
     MAX_HOLDING = "MAX_HOLDING"
-    FRIDAY_CLOSE = "FRIDAY_CLOSE"
+    FRIDAY_CLOSE = "FRIDAY_CLOSE"  # 레거시 DB 기록용
+    EOD_CLOSE = "EOD_CLOSE"  # 매 영업일 장마감 전량 청산
     MANUAL = "MANUAL"
 
 
