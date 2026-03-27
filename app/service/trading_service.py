@@ -26,7 +26,7 @@ _REASON_KR = {
     OrderReason.TAKE_PROFIT: "익절 (목표 수익 달성)",
     OrderReason.TRAILING_STOP: "트레일링 스탑 (고점 대비 하락)",
     OrderReason.MAX_HOLDING: "보유 기간 초과",
-    OrderReason.FRIDAY_CLOSE: "장마감 전량 청산 (레거시)",
+    OrderReason.FRIDAY_CLOSE: "장마감 전량 청산",
     OrderReason.EOD_CLOSE: "장마감 전량 청산",
     OrderReason.DEAD_CROSS: "하락 신호 (데드크로스)",
     OrderReason.GOLDEN_CROSS: "상승 신호 (골든크로스)",
@@ -123,6 +123,21 @@ class TradingService:
         today = datetime.now().strftime("%Y-%m-%d")
         counts = await self._order_log.get_today_counts(today)
         self._daily_buy_count = counts["buy_count"]
+
+    async def _refresh_holdings_after_eod_sells(self, initial_count: int, sell_count: int) -> None:
+        """매도 직후 KIS 잔고 API가 이전 보유 수량을 반환하는 경우가 있어 재조회한다."""
+        target_max = max(0, initial_count - sell_count)
+        for attempt in range(6):
+            await self.refresh_holdings()
+            if len(self._last_positions) <= target_max:
+                return
+            if attempt < 5:
+                await asyncio.sleep(1.5)
+        logger.warning(
+            "장마감 청산 후 잔고 동기화 지연 — 예상 최대 %d종목, API 응답 %d종목 (잠시 후 다시 조회됩니다)",
+            target_max,
+            len(self._last_positions),
+        )
 
     async def _backfill_missing_reports(self) -> None:
         today = datetime.now().strftime("%Y-%m-%d")
@@ -1151,7 +1166,7 @@ class TradingService:
                 logger.exception("장마감 청산 중 %s 매도 오류", pos.stock_code)
 
         if sell_count > 0:
-            await self.refresh_holdings()
+            await self._refresh_holdings_after_eod_sells(len(positions), sell_count)
 
         msg = f"🌆 장마감 청산 완료 — {sell_count}/{len(positions)}종목 매도 (익일 갭 리스크 방지)"
         trade_logger.info(msg)
@@ -1172,16 +1187,24 @@ class TradingService:
             self._emit(EventType.POST_MARKET, "🌙 장 마감 — 오늘 거래 결산 중...")
 
             today = datetime.now().strftime("%Y-%m-%d")
-            positions = await self._order.get_balance() or []
-            self._last_positions = positions
+            counts = await self._order_log.get_today_counts(today)
+
+            await self.refresh_holdings()
+            positions = self._last_positions
+            if counts["sell_count"] > 0 and len(positions) > 0:
+                for _ in range(5):
+                    await asyncio.sleep(1.2)
+                    await self.refresh_holdings()
+                    positions = self._last_positions
+                    if len(positions) == 0:
+                        break
+
             await self._cleanup_unfilled_orders()
 
             total_eval = sum(p.current_price * p.quantity for p in positions)
             total_cost = sum(p.avg_price * p.quantity for p in positions)
             total_profit = total_eval - total_cost
             rate = (total_profit / total_cost * 100) if total_cost > 0 else 0.0
-
-            counts = await self._order_log.get_today_counts(today)
 
             account = await self._order.get_account_summary()
             total_cash = account["total_cash"] if account else 0
