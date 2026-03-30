@@ -376,15 +376,16 @@ body{font-family:-apple-system,'Pretendard','Noto Sans KR',sans-serif;background
 <div class="help-panel">
   <div class="help-title" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='none'?'grid':'none'">📖 용어 설명 (클릭해서 펼치기)</div>
   <div class="help-grid" style="display:none">
-    <div class="help-item"><span class="hi">골든크로스</span> 단기 평균이 장기 평균을 상향 돌파 → 상승 신호</div>
-    <div class="help-item"><span class="hi">데드크로스</span> 단기 평균이 장기 평균을 하향 돌파 → 하락 신호</div>
-    <div class="help-item"><span class="hi">손절</span> 손실 -5% 이하면 더 큰 손해를 막기 위해 매도</div>
-    <div class="help-item"><span class="hi">익절</span> 수익 +15% 이상이면 목표 달성으로 매도</div>
-    <div class="help-item"><span class="hi">트레일링 스탑</span> 고점 대비 4% 하락 시 자동 매도 (수익 보호)</div>
-    <div class="help-item"><span class="hi">RSI</span> 과열(70↑)/과냉(30↓) 지표. 적정 구간만 매수</div>
-    <div class="help-item"><span class="hi">모멘텀 단타</span> 이미 올라가는 종목만 매수 (MA5&gt;MA20, 가격&gt;MA5, RSI 45~70)</div>
-    <div class="help-item"><span class="hi">MA5/MA20</span> 5일/20일 이동평균. 교차로 추세 판단</div>
-    <div class="help-item"><span class="hi">시장 필터</span> KOSPI 하락세면 신규 매수 중단</div>
+    <div class="help-item"><span class="hi">단타 진입 (SCALPING_ENTRY)</span> 전일 종가 대비 일정 % 상승 + MA5&gt;MA20(3일 연속) + 현재가≥MA5 + RSI(기본 50~65). 장 시작 N분(기본 09:25) 이후만 매수</div>
+    <div class="help-item"><span class="hi">전일대비 등락률</span> 전일 종가 대비 현재가(%). 설정 구간(기본 +0.3~+4%) 밖이면 매수 안 함 (KIS prdy_ctrt)</div>
+    <div class="help-item"><span class="hi">손절</span> 매입가 대비 손실이 설정 % (기본 -2%) 이하이면 손실 확대 방지를 위해 매도</div>
+    <div class="help-item"><span class="hi">익절</span> 매입가 대비 수익이 설정 % (기본 +2%) 이상이면 목표 달성으로 매도</div>
+    <div class="help-item"><span class="hi">트레일링 스탑</span> 수익이 활성화 기준(기본 +1.5%) 이상이면 고점 추적 후, 고점 대비 설정 %(기본 0.8%) 하락 시 매도</div>
+    <div class="help-item"><span class="hi">데드크로스 매도</span> MA5가 MA20 아래로 전환 후 2일 유지 시 하락 신호로 매도</div>
+    <div class="help-item"><span class="hi">RSI</span> 일봉 RSI(14). 단타는 기본 50~65만 매수 (과열·모멘텀 부족 회피)</div>
+    <div class="help-item"><span class="hi">MA5 / MA20</span> 5일·20일 종가 이동평균. 단타는 5일선이 20일선 위 3일 연속 등으로 추세 확인</div>
+    <div class="help-item"><span class="hi">장마감 청산 (EOD)</span> 매 영업일 15:28경 보유 전량 매도. 야간·익일 갭 리스크 완화 (끄기: EOD_CLOSE_ENABLED)</div>
+    <div class="help-item"><span class="hi">시장 필터</span> KOSPI가 MA(20) 아래면 신규 매수 중단 (설정으로 끌 수 있음)</div>
   </div>
 </div>
 
@@ -1172,11 +1173,11 @@ function renderMaSkipLine(d,isClosest){
     const color=pct>=80?'var(--green)':pct>=50?'var(--yellow)':pct>=25?'#f97316':'var(--red)';
     const urgency=absGap<1?'거의 다 왔어요!':absGap<3?'조금 더 올라야 해요':'아직 멀어요';
     let tipText;
-    if(absGap<1) tipText='5일 평균이 20일 평균을 거의 넘었어요. 이대로 오르면 골든크로스·상승추세·모멘텀 중 첫 조건에 도달할 수 있어요.';
-    else if(absGap<3) tipText='5일 평균이 20일 평균 아래에 있지만 차이가 줄어드는 중이에요. 주가가 며칠 더 오르면 골든크로스가 발생할 수 있습니다.';
-    else tipText='5일 평균이 20일 평균보다 많이 낮아요. 골든크로스가 첫 관문이라, 주가가 꽤 오르거나 시간이 더 지나야 매수 조건에 도달합니다.';
+    if(absGap<1) tipText='5일선이 20일선에 거의 닿았어요. MA5&gt;MA20이 3일 연속 유지되면 단타 MA 조건에 한 걸음 더 가까워져요. (그 외 전일대비·RSI·시간대도 필요)';
+    else if(absGap<3) tipText='5일선이 아직 20일선 아래예요. 차이가 줄어들면 단타용 MA 추세 조건을 만족할 수 있어요.';
+    else tipText='5일선이 20일선보다 많이 낮아요. 단타는 MA5&gt;MA20(3일) 외에도 전일대비 상승·RSI 50~65·장 시작 후 진입 등이 필요합니다.';
     const tip=`<i class="tip">?<span class="tip-box">${tipText}</span></i>`;
-    statusHtml=`<span class="skip-status" style="color:${color}">골든크로스까지 ${absGap.toFixed(1)}% — ${urgency}${tip}</span>`;
+    statusHtml=`<span class="skip-status" style="color:${color}">MA5&gt;MA20(3일)까지 ${absGap.toFixed(1)}% — ${urgency}${tip}</span>`;
     gaugeHtml=`<span class="skip-gauge"><span class="skip-gauge-fill" style="width:${pct}%;background:${color}"></span></span>`
       +`<span class="skip-ma-sub">5일선 ${fmtNum(d.ma5)} ← 아직 20일선 ${fmtNum(d.ma20)} 아래</span>`;
   } else {
@@ -1185,8 +1186,8 @@ function renderMaSkipLine(d,isClosest){
       label='괴리율 과다';
       tipText='5일 평균이 20일 평균보다 5% 넘게 위에 있어요. 이미 많이 오른 상태라 고점 매수 위험이 있어 보류합니다.';
     } else {
-      label='상승추세·모멘텀 미확인';
-      tipText='5일선이 20일선 위에 있지만, 골든크로스(1일 유지)·상승추세(3일 연속)·모멘텀(MA5 상승+RSI 45~70) 중 어느 조건도 충족하지 못했어요.';
+      label='단타 조건 미확인';
+      tipText='5일선이 20일선 위일 수 있지만, 단타(SCALPING)는 MA5&gt;MA20 3일 연속·현재가≥MA5·전일대비 등락률·RSI 50~65·진입 시간 등을 모두 봅니다.';
     }
     const tip=`<i class="tip">?<span class="tip-box">${tipText}</span></i>`;
     statusHtml=`<span class="skip-status" style="color:var(--blue)">5일선 위인데 미충족 — ${label}${tip}</span>`;
@@ -1219,7 +1220,7 @@ function renderSkipGroup(skips){
   skips.forEach(s=>{const r=s.data?.skip||'기타';reasons[r]=(reasons[r]||0)+1;});
   const summary=Object.entries(reasons).map(([k,v])=>k+' '+v).join(', ');
 
-  const maSkips=skips.filter(s=>s.data?.skip==='MA조건미충족'&&s.data?.ma5!=null);
+  const maSkips=skips.filter(s=>(s.data?.skip==='MA조건미충족'||s.data?.skip==='단타조건미충족')&&s.data?.ma5!=null);
   maSkips.sort((a,b)=>{
     const gA=Math.abs(getGapInfo(a.data)||99);
     const gB=Math.abs(getGapInfo(b.data)||99);
@@ -1231,7 +1232,7 @@ function renderSkipGroup(skips){
     const c=maSkips[0].data;
     const g=getGapInfo(c);
     if(g!==null){
-      const label=g<0?`골든크로스까지 ${Math.abs(g).toFixed(1)}%`:`5일선 위인데 상승추세·모멘텀 미확인`;
+      const label=g<0?`MA5>MA20(3일)까지 ${Math.abs(g).toFixed(1)}%`:`5일선 위인데 단타 조건 미충족`;
       closestHtml=`<span class="skip-closest">가장 근접: ${c.name||c.code} · ${label}</span>`;
     }
   }
@@ -1250,7 +1251,7 @@ function renderSkipGroup(skips){
   const lines=sorted.map(s=>{
     const d=s.data||{};
     const isClosest=maSkips.length>0&&s===maSkips[0];
-    if(d.skip==='MA조건미충족'&&d.ma5!=null) return renderMaSkipLine(d,isClosest);
+    if((d.skip==='MA조건미충족'||d.skip==='단타조건미충족')&&d.ma5!=null) return renderMaSkipLine(d,isClosest);
     return renderPlainSkipLine(d);
   }).join('');
 
