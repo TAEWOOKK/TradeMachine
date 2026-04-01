@@ -446,7 +446,7 @@ Params:
 ### [F2-4] 관심 종목 매수 판단
 
 ### 목적
-관심 종목 중 **단타 조건** (전일대비 상승 + MA 상승추세 + RSI 50~65) + 품질 필터를 통과한 종목을 매수.
+관심 종목 중 **단타 조건** (전일대비 상승 + MA 상승추세 + RSI 47~65) + 품질 필터를 통과한 종목을 매수.
 단, SCALPING_ENTRY_MINUTE(25)분 경과 전에는 매수 보류 (장 초반 변동성 회피).
 
 > 매수 전략 조건식 상세: [trading-strategy.md §3](./trading-strategy.md) 참조
@@ -569,45 +569,22 @@ Params:
   │    MA20[i] = sum(close_prices[i:i+20]) / 20
   │
   ▼
-[STEP 7] 골든크로스 판별 (확인 기간 포함)
+[STEP 7] 단타(SCALPING) 추세 판별
   │
   │  ※ 조건식 상세: trading-strategy.md §3.1 참조
-  │  요약 (4단계 모두 통과해야 골든크로스 매수):
-  │    [7-a] 최근 14일 내 MA5가 MA20 아래→위 교차 발생?
-  │    [7-b] 교차 후 3일 연속 MA5 > MA20 유지?
-  │    [7-c] 현재가 > MA20?
-  │    [7-d] MA20 상승 추세? (오늘 MA20 > 3일전 MA20)
-  │    → 모두 YES: GOLDEN_CROSS 매수 → [STEP 7.5] 거래량 확인으로 이동
-  │    → 하나라도 NO: [STEP 7-E] 상승추세 판별로 이동
-  │
-  ▼
-[STEP 7-E] 상승추세 진입 판별 (UPTREND_ENTRY) — 골든크로스 미충족 시
-  │
-  │  골든크로스 lookback(14일) 밖에서 교차했지만 상승추세 유지 중인 종목 감지
   │  조건 (모두 충족):
-  │    [E-1] MA5 > MA20이 최근 5일 연속 유지
-  │    [E-2] 현재가 > MA20
-  │    [E-3] MA20 상승 추세 (오늘 MA20 > 3일전 MA20)
-  │    [E-4] MA5와 MA20 괴리율 5% 이내
-  │    [E-5] 최근 5일 중 거래량 >= 20일 평균인 날이 2일 이상
-  │    → 모두 YES: UPTREND_ENTRY 매수 → [STEP 7.7] RSI 필터로 이동
-  │    → 하나라도 NO: SKIP
+  │    [7-a] MA5 > MA20 최근 3일 연속 유지
+  │    [7-b] 현재가 >= MA5 (모멘텀)
+  │    → 모두 YES → [STEP 7.7] RSI 필터로 이동
+  │    → 하나라도 NO: SKIP "단타조건미충족"
   │
   ▼
-[STEP 7.5] 거래량 확인 (Volume Confirmation)
-  │
-  │  교차일의 거래량 (candles[cross_day].volume)
-  │  MA(20) 평균 거래량 = 최근 20일 거래량 평균
-  │  교차일 거래량 >= 평균 × VOLUME_CONFIRM_RATIO (1.5)?
-  │  → NO: SKIP "거래량 미수반 교차"
-  │
-  ▼
-[STEP 7.7] RSI 과열 필터
+[STEP 7.7] RSI 필터 (단타용)
   │
   │  RSI(14) 계산 (최근 14일 종가 기준)
-  │  RSI > RSI_OVERBOUGHT (70)? → SKIP "과매수"
-  │  RSI < RSI_OVERSOLD (30)? → SKIP "과매도"
-  │  30 <= RSI <= 70 → 통과
+  │  RSI > RSI_SCALPING_MAX (65)? → SKIP "RSI과열"
+  │  RSI < RSI_SCALPING_MIN (47)? → SKIP "RSI부족"
+  │  47 <= RSI <= 65 → 통과
   │
   ▼
 [STEP 8] 매수 수량 계산
@@ -626,12 +603,10 @@ Params:
   │    응답: available_cash = int(output["ord_psbl_cash"])
   │
   │  [8-b] 투자 금액 산정
-  │    invest_amount = available_cash × MAX_INVESTMENT_RATIO (0.1)
-  │    예: 10,000,000 × 0.1 = 1,000,000원
+  │    invest_amount = available_cash / n_slots (목표종목수 기준 분배)
   │
   │  [8-c] 수량 계산
-  │    quantity = invest_amount // current_price  (정수 나눗셈)
-  │    예: 1,000,000 // 73,000 = 13주
+  │    quantity = invest_amount // (current_price × 1.00015)  (수수료 감안, 정수 나눗셈)
   │
   │    quantity == 0?
   │    → SKIP "잔액 부족"
@@ -662,7 +637,7 @@ Params:
   │      rt_cd == "1" → 실패, 에러 로그
   │
   │  결과 기록:
-  │    → DB INSERT: orders 테이블 (stock_code, BUY, GOLDEN_CROSS 또는 UPTREND_ENTRY, 수량, 성공여부, ODNO)
+  │    → DB INSERT: orders 테이블 (stock_code, BUY, SCALPING_ENTRY, 수량, 성공여부, ODNO)
   │    → 로그: trading.log에 매수 실행 기록
   │
   ▼

@@ -84,6 +84,7 @@ class TradingService:
             "in_market_hours": in_market,
             "daily_buy_count": self._daily_buy_count,
             "max_daily_buy": self._settings.max_daily_buy_count,
+            "max_holding": self._settings.max_holding_count,
             "consecutive_failures": self._consecutive_failures,
             "trailing_count": len(self._trailing_activated),
             "watch_list": self._settings.watch_list_codes,
@@ -364,7 +365,8 @@ class TradingService:
                     self._emit(EventType.BUY_EVAL,
                         "📉 시장 전체가 하락 추세라서 오늘은 새로운 매수를 하지 않습니다 (KOSPI < 20일 평균)")
 
-                if buy_allowed and self._daily_buy_count >= self._settings.max_daily_buy_count:
+                if (buy_allowed and self._settings.max_daily_buy_count > 0
+                        and self._daily_buy_count >= self._settings.max_daily_buy_count):
                     self._emit(EventType.BUY_EVAL,
                         f"⏸️ 오늘 매수 한도({self._daily_buy_count}/{self._settings.max_daily_buy_count}건)를 모두 사용했어요")
                     buy_allowed = False
@@ -396,8 +398,13 @@ class TradingService:
                             self._stock_data(code))
 
             if buy_count > 0:
+                optimistic_codes = {p.stock_code for p in self._last_positions}
                 refreshed = await self._order.get_balance()
                 if refreshed is not None:
+                    refreshed_codes = {p.stock_code for p in refreshed}
+                    for op in self._last_positions:
+                        if op.stock_code not in refreshed_codes and op.stock_code in optimistic_codes:
+                            refreshed.append(op)
                     positions = refreshed
                     self._last_positions = positions
                 try:
@@ -608,7 +615,8 @@ class TradingService:
         if (self._settings.max_holding_count > 0
                 and current_holding_count >= self._settings.max_holding_count):
             return "SKIP"
-        if self._daily_buy_count >= self._settings.max_daily_buy_count:
+        if (self._settings.max_daily_buy_count > 0
+                and self._daily_buy_count >= self._settings.max_daily_buy_count):
             return "SKIP"
         if not market_ok:
             return "SKIP"
@@ -762,12 +770,14 @@ class TradingService:
             if yesterday and yesterday.get("total_cash", 0) >= price_with_fee:
                 available = yesterday["total_cash"]
                 logger.info("API 잔고 0 → 전일 리포트 total_cash %s원 사용", f"{available:,}")
-        n_slots = (
+        max_slots = (
             self._settings.max_holding_count
             if self._settings.max_holding_count > 0
             else max(5, len(self._settings.watch_list_codes))
         )
-        invest_per_stock = int(available / n_slots)
+        current_holding = len(self._last_positions)
+        empty_slots = max(1, max_slots - current_holding)
+        invest_per_stock = int(available / empty_slots)
         if self._settings.max_investment_ratio < 1.0:
             invest_per_stock = min(invest_per_stock, int(available * self._settings.max_investment_ratio))
         quantity = int(invest_per_stock / price_with_fee)
@@ -817,6 +827,19 @@ class TradingService:
         )
         if result.success:
             total = price_data.current_price * quantity
+            new_pos = Position(
+                stock_code=stock_code,
+                quantity=quantity,
+                avg_price=float(price_data.current_price),
+                profit_rate=0.0,
+                current_price=price_data.current_price,
+            )
+            if not any(p.stock_code == stock_code for p in self._last_positions):
+                self._last_positions.append(new_pos)
+            if self._last_account_summary:
+                self._last_account_summary["total_cash"] = max(
+                    0, self._last_account_summary.get("total_cash", 0) - total
+                )
             self._emit(EventType.ORDER_EXEC,
                 f"🎉 {name} 매수 완료! {quantity}주 × {price_data.current_price:,}원 = {total:,}원 "
                 f"({reason_label})", {

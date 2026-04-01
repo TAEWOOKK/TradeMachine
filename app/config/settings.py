@@ -42,7 +42,7 @@ class Settings(BaseSettings):
     scalping_entry_minute: int = 25  # 장 시작 후 N분 이후 매수 (0=제한없음)
     min_intraday_change: float = 0.3  # 전일대비 최소 상승률 (%)
     max_intraday_change: float = 4.0  # 전일대비 최대 상승률 (%)
-    rsi_scalping_min: int = 50  # 단타 RSI 하한
+    rsi_scalping_min: int = 47  # 단타 RSI 하한
     rsi_scalping_max: int = 65  # 단타 RSI 상한
 
     enable_market_filter: bool = True
@@ -89,6 +89,6 @@ class Settings(BaseSettings):
     @field_validator("max_daily_buy_count")
     @classmethod
     def _validate_daily_buy(cls, v: int) -> int:
-        if v < 1:
-            raise ValueError("max_daily_buy_count는 1 이상이어야 합니다")
+        if v < 0:
+            raise ValueError("max_daily_buy_count는 0 이상이어야 합니다 (0=무제한)")
         return v

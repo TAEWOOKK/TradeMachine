@@ -67,7 +67,7 @@ body{font-family:-apple-system,'Pretendard','Noto Sans KR',sans-serif;background
 .section{margin-bottom:16px}
 .section-title{font-size:13px;font-weight:700;color:var(--text-sec);margin-bottom:10px;display:flex;align-items:center;gap:8px;letter-spacing:.3px}
 .section-title .icon{font-size:16px}
-.pos-grid{display:grid;gap:8px;max-height:320px;overflow-y:auto;scrollbar-width:thin;scrollbar-color:var(--border) transparent}
+.pos-grid{display:grid;gap:8px;align-content:start;overflow-y:auto;scrollbar-width:thin;scrollbar-color:var(--border) transparent}
 .pos-card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius-sm);padding:14px 16px;display:grid;grid-template-columns:1fr auto;gap:8px;align-items:center}
 .pos-card:hover{border-color:var(--border-light)}
 .pos-name{font-size:15px;font-weight:700}
@@ -133,7 +133,7 @@ body{font-family:-apple-system,'Pretendard','Noto Sans KR',sans-serif;background
 .log-filter-btn.active[data-filter="system"]{background:#64748b20;border-color:#94a3b8;color:#94a3b8}
 
 /* log */
-.log-container{background:var(--card);border:1px solid var(--border);border-radius:var(--radius-sm);max-height:500px;overflow-y:auto;scrollbar-width:thin;scrollbar-color:var(--border) transparent}
+.log-container{background:var(--card);border:1px solid var(--border);border-radius:var(--radius-sm);overflow-y:auto;scrollbar-width:thin;scrollbar-color:var(--border) transparent}
 .log-item{border-bottom:1px solid var(--border);font-size:13px;transition:background .1s}
 .log-item:hover{background:var(--card-hover)}
 .log-item:last-child{border-bottom:none}
@@ -196,7 +196,7 @@ body{font-family:-apple-system,'Pretendard','Noto Sans KR',sans-serif;background
 .log-empty{padding:40px;text-align:center;color:var(--text-dim)}
 
 /* errors */
-.error-list{background:var(--card);border:1px solid var(--border);border-radius:var(--radius-sm);max-height:220px;overflow-y:auto}
+.error-list{background:var(--card);border:1px solid var(--border);border-radius:var(--radius-sm);overflow-y:auto;scrollbar-width:thin;scrollbar-color:var(--border) transparent}
 .error-item{padding:10px 14px;border-bottom:1px solid var(--border);border-left:3px solid var(--red);font-size:13px;line-height:1.5}
 .error-item:last-child{border-bottom:none}
 .error-time{font-size:11px;color:var(--text-dim);margin-bottom:2px}
@@ -210,9 +210,13 @@ body{font-family:-apple-system,'Pretendard','Noto Sans KR',sans-serif;background
 .right-tab .tab-badge{display:inline-flex;align-items:center;justify-content:center;min-width:18px;height:18px;padding:0 5px;border-radius:9px;font-size:10px;font-weight:700;margin-left:6px}
 .right-panel-body{display:none}
 .right-panel-body.active{display:block}
+.two-col .right-panel-body.active{display:flex;flex-direction:column;flex:1;min-height:0;overflow:hidden}
+.two-col .right-panel-body.active>.trade-list,
+.two-col .right-panel-body.active>.error-list,
+.two-col .right-panel-body.active>#asset-breakdown-content{flex:1;min-height:0;overflow-y:auto}
 
 /* trades */
-.trade-list{max-height:480px;overflow-y:auto;scrollbar-width:thin;scrollbar-color:var(--border) transparent}
+.trade-list{overflow-y:auto;scrollbar-width:thin;scrollbar-color:var(--border) transparent}
 .trade-day-group{margin-bottom:2px}
 .trade-day-header{display:flex;align-items:center;justify-content:space-between;padding:8px 14px;background:var(--surface);border-bottom:1px solid var(--border);position:sticky;top:0;z-index:1}
 .trade-day-date{font-size:13px;font-weight:700;color:var(--text)}
@@ -237,16 +241,20 @@ body{font-family:-apple-system,'Pretendard','Noto Sans KR',sans-serif;background
 .trade-empty{padding:40px;text-align:center;color:var(--text-dim);font-size:13px}
 
 /* help */
-.help-panel{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);padding:14px 18px;margin-bottom:16px}
+.help-panel{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);padding:14px 18px;margin-top:28px;margin-bottom:16px}
 .help-title{font-size:12px;font-weight:700;margin-bottom:6px;color:var(--text-sec);cursor:pointer;user-select:none}
 .help-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:6px}
 .help-item{display:flex;gap:6px;font-size:12px;color:var(--text-sec)}
 .help-item .hi{font-weight:600;color:var(--text);white-space:nowrap}
 
 /* layout */
-.two-col-half{display:grid;grid-template-columns:1fr 1fr;gap:16px}
-.two-col{display:grid;grid-template-columns:2fr 1fr;gap:16px}
-@media(max-width:960px){.summary-row{grid-template-columns:repeat(3,1fr)!important}.two-col{grid-template-columns:1fr}.two-col-half{grid-template-columns:1fr}.status-row{grid-template-columns:1fr}}
+.two-col-half{display:grid;grid-template-columns:1fr 1fr;gap:16px;height:460px}
+.two-col{display:grid;grid-template-columns:2fr 1fr;gap:16px;height:540px;margin-top:28px}
+.two-col-half>.section,.two-col>.section{display:flex;flex-direction:column;min-height:0;overflow:hidden;margin-bottom:0}
+.two-col-half>.section>.pos-grid,
+.two-col-half>.section>[data-chart-wrap]{flex:1;min-height:0;overflow-y:auto;scrollbar-width:thin;scrollbar-color:var(--border) transparent}
+.two-col>.section>.log-container{flex:1;min-height:0}
+@media(max-width:960px){.summary-row{grid-template-columns:repeat(3,1fr)!important}.two-col{grid-template-columns:1fr;height:auto}.two-col-half{grid-template-columns:1fr;height:auto}.two-col>.section,.two-col-half>.section{min-height:400px}.status-row{grid-template-columns:1fr}}
 @media(max-width:600px){.summary-row{grid-template-columns:repeat(2,1fr)!important}.header{flex-direction:column;gap:10px}}
 </style>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
@@ -300,7 +308,7 @@ body{font-family:-apple-system,'Pretendard','Noto Sans KR',sans-serif;background
     <div class="sum-label">보유 종목</div>
   </div>
   <div class="sum-card">
-    <div class="sum-value" id="sum-buy" style="color:var(--green)">0<span style="font-size:14px;color:var(--text-dim)"> / 3</span></div>
+    <div class="sum-value" id="sum-buy" style="color:var(--green)">0</div>
     <div class="sum-label">오늘 매수</div>
   </div>
   <div class="sum-card">
@@ -332,7 +340,7 @@ body{font-family:-apple-system,'Pretendard','Noto Sans KR',sans-serif;background
   </div>
   <div class="section">
     <div class="section-title"><span class="icon">📈</span> 손익 추이 (최근 90일)</div>
-    <div style="background:var(--card);border:1px solid var(--border);border-radius:var(--radius-sm);padding:12px">
+    <div data-chart-wrap style="background:var(--card);border:1px solid var(--border);border-radius:var(--radius-sm);padding:12px">
       <div style="height:180px"><canvas id="chart-daily-pnl"></canvas></div>
       <div style="height:100px;margin-top:4px"><canvas id="chart-pnl"></canvas></div>
       <div style="height:100px;margin-top:4px"><canvas id="chart-assets"></canvas></div>
@@ -384,13 +392,13 @@ body{font-family:-apple-system,'Pretendard','Noto Sans KR',sans-serif;background
 <div class="help-panel">
   <div class="help-title" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='none'?'grid':'none'">📖 용어 설명 (클릭해서 펼치기)</div>
   <div class="help-grid" style="display:none">
-    <div class="help-item"><span class="hi">단타 진입 (SCALPING_ENTRY)</span> 전일 종가 대비 일정 % 상승 + MA5&gt;MA20(3일 연속) + 현재가≥MA5 + RSI(기본 50~65). 장 시작 N분(기본 09:25) 이후만 매수</div>
+    <div class="help-item"><span class="hi">단타 진입 (SCALPING_ENTRY)</span> 전일 종가 대비 일정 % 상승 + MA5&gt;MA20(3일 연속) + 현재가≥MA5 + RSI(기본 47~65). 장 시작 N분(기본 09:25) 이후만 매수</div>
     <div class="help-item"><span class="hi">전일대비 등락률</span> 전일 종가 대비 현재가(%). 설정 구간(기본 +0.3~+4%) 밖이면 매수 안 함 (KIS prdy_ctrt)</div>
     <div class="help-item"><span class="hi">손절</span> 매입가 대비 손실이 설정 % (기본 -2%) 이하이면 손실 확대 방지를 위해 매도</div>
     <div class="help-item"><span class="hi">익절</span> 매입가 대비 수익이 설정 % (기본 +2%) 이상이면 목표 달성으로 매도</div>
     <div class="help-item"><span class="hi">트레일링 스탑</span> 수익이 활성화 기준(기본 +1.5%) 이상이면 고점 추적 후, 고점 대비 설정 %(기본 0.8%) 하락 시 매도</div>
     <div class="help-item"><span class="hi">데드크로스 매도</span> MA5가 MA20 아래로 전환 후 2일 유지 시 하락 신호로 매도</div>
-    <div class="help-item"><span class="hi">RSI</span> 일봉 RSI(14). 단타는 기본 50~65만 매수 (과열·모멘텀 부족 회피)</div>
+    <div class="help-item"><span class="hi">RSI</span> 일봉 RSI(14). 단타는 기본 47~65만 매수 (과열·모멘텀 부족 회피)</div>
     <div class="help-item"><span class="hi">MA5 / MA20</span> 5일·20일 종가 이동평균. 단타는 5일선이 20일선 위 3일 연속 등으로 추세 확인</div>
     <div class="help-item"><span class="hi">장마감 청산 (EOD)</span> 매 영업일 15:28경 보유 전량 매도. 야간·익일 갭 리스크 완화 (끄기: EOD_CLOSE_ENABLED)</div>
     <div class="help-item"><span class="hi">시장 필터</span> KOSPI가 MA(20) 아래면 신규 매수 중단 (설정으로 끌 수 있음)</div>
@@ -481,6 +489,7 @@ let lastInMarket = false;
 let activeFilter = 'all';
 let lastPositions = [];
 let lastStatus = null;
+let lastMaxHolding = 0;
 
 function pad2(n){return String(n).padStart(2,'0');}
 function fmtTime(ts) {
@@ -949,7 +958,12 @@ function updateStatus(s) {
   if(s.paper_trading){mt.className='mode-tag mode-paper';mt.textContent='🧪 모의투자';}
   else{mt.className='mode-tag mode-live';mt.textContent='💰 실전투자';}
 
-  $('sum-buy').innerHTML = s.daily_buy_count+'<span style="font-size:14px;color:var(--text-dim)"> / '+s.max_daily_buy+'</span>';
+  if(s.max_daily_buy > 0){
+    $('sum-buy').innerHTML = s.daily_buy_count+'<span style="font-size:14px;color:var(--text-dim)"> / '+s.max_daily_buy+'</span>';
+  } else {
+    $('sum-buy').textContent = s.daily_buy_count;
+  }
+  lastMaxHolding = s.max_holding || 0;
   lastInMarket = s.in_market_hours;
   if(s.total_cash>0){
     lastCash = s.total_cash;
@@ -1051,7 +1065,11 @@ function updatePositions(positions) {
   const el=$('positions');
   if(!positions||positions.length===0){
     el.innerHTML='<div class="pos-empty">아직 보유한 종목이 없어요. 매수 조건이 충족되면 자동으로 매수합니다.</div>';
-    $('sum-holding').textContent='0';
+    if(lastMaxHolding > 0){
+      $('sum-holding').innerHTML='0<span style="font-size:14px;color:var(--text-dim)"> / '+lastMaxHolding+'</span>';
+    } else {
+      $('sum-holding').textContent='0';
+    }
     $('sum-profit').textContent='-';$('sum-profit').style.color='var(--text-dim)';
     if(lastCash>0){
       $('sum-total-assets').textContent=fmtWon(lastCash);
@@ -1059,7 +1077,11 @@ function updatePositions(positions) {
     }
     return;
   }
-  $('sum-holding').textContent=positions.length;
+  if(lastMaxHolding > 0){
+    $('sum-holding').innerHTML=positions.length+'<span style="font-size:14px;color:var(--text-dim)"> / '+lastMaxHolding+'</span>';
+  } else {
+    $('sum-holding').textContent=positions.length;
+  }
   let totalEval=0,totalCost=0;
   positions.forEach(p=>{totalEval+=p.eval_amount;totalCost+=p.avg_price*p.quantity;});
   const totalProfit=totalEval-totalCost;
@@ -1228,7 +1250,7 @@ function renderMaSkipLine(d,isClosest){
     let tipText;
     if(absGap<1) tipText='5일선이 20일선에 거의 닿았어요. MA5&gt;MA20이 3일 연속 유지되면 단타 MA 조건에 한 걸음 더 가까워져요. (그 외 전일대비·RSI·시간대도 필요)';
     else if(absGap<3) tipText='5일선이 아직 20일선 아래예요. 차이가 줄어들면 단타용 MA 추세 조건을 만족할 수 있어요.';
-    else tipText='5일선이 20일선보다 많이 낮아요. 단타는 MA5&gt;MA20(3일) 외에도 전일대비 상승·RSI 50~65·장 시작 후 진입 등이 필요합니다.';
+    else tipText='5일선이 20일선보다 많이 낮아요. 단타는 MA5&gt;MA20(3일) 외에도 전일대비 상승·RSI 47~65·장 시작 후 진입 등이 필요합니다.';
     const tip=`<i class="tip">?<span class="tip-box">${tipText}</span></i>`;
     statusHtml=`<span class="skip-status" style="color:${color}">MA5&gt;MA20(3일)까지 ${absGap.toFixed(1)}% — ${urgency}${tip}</span>`;
     gaugeHtml=`<span class="skip-gauge"><span class="skip-gauge-fill" style="width:${pct}%;background:${color}"></span></span>`
@@ -1240,7 +1262,7 @@ function renderMaSkipLine(d,isClosest){
       tipText='5일 평균이 20일 평균보다 5% 넘게 위에 있어요. 이미 많이 오른 상태라 고점 매수 위험이 있어 보류합니다.';
     } else {
       label='단타 조건 미확인';
-      tipText='5일선이 20일선 위일 수 있지만, 단타(SCALPING)는 MA5&gt;MA20 3일 연속·현재가≥MA5·전일대비 등락률·RSI 50~65·진입 시간 등을 모두 봅니다.';
+      tipText='5일선이 20일선 위일 수 있지만, 단타(SCALPING)는 MA5&gt;MA20 3일 연속·현재가≥MA5·전일대비 등락률·RSI 47~65·진입 시간 등을 모두 봅니다.';
     }
     const tip=`<i class="tip">?<span class="tip-box">${tipText}</span></i>`;
     statusHtml=`<span class="skip-status" style="color:var(--blue)">5일선 위인데 미충족 — ${label}${tip}</span>`;

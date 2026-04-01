@@ -76,7 +76,7 @@
     현재가 >= MA(5)
 
 [3] RSI 필터
-    50 <= RSI <= 65
+    47 <= RSI <= 65
     → 모멘텀 있으나 과열 아님
 
 [4] 진입 시간
@@ -89,7 +89,7 @@
 | `MIN_INTRADAY_CHANGE` | 0.3 (%) | 전일 대비 최소 상승률 (오르는 종목만) |
 | `MAX_INTRADAY_CHANGE` | 4.0 (%) | 전일 대비 최대 상승률 (과열 구간 제외) |
 | `SCALPING_ENTRY_MINUTE` | 25 | 장 시작 후 N분 이후 매수 허용 (0=제한없음) |
-| `RSI_SCALPING_MIN` | 50 | 단타용 RSI 하한 |
+| `RSI_SCALPING_MIN` | 47 | 단타용 RSI 하한 |
 | `RSI_SCALPING_MAX` | 65 | 단타용 RSI 상한 |
 
 ### 3.2 매수 판별 플로우
@@ -125,7 +125,7 @@
   │
   ▼
 [RSI 체크]
-  RSI 50~65? → NO → SKIP
+  RSI 47~65? → NO → SKIP
   │
   ▼
 ★ 매수 실행 ★ (OrderReason: SCALPING_ENTRY)
@@ -275,7 +275,7 @@ P4 데드크로스: MA(5) < MA(20) 2일 유지 → 매도
 | `MIN_INTRADAY_CHANGE` | 0.3 | 전일대비 최소 상승률 (%) |
 | `MAX_INTRADAY_CHANGE` | 4.0 | 전일대비 최대 상승률 (%) |
 | `SCALPING_ENTRY_MINUTE` | 25 | 장 시작 후 매수 허용 시점 (분) |
-| `RSI_SCALPING_MIN` | 50 | RSI 하한 |
+| `RSI_SCALPING_MIN` | 47 | RSI 하한 |
 | `RSI_SCALPING_MAX` | 65 | RSI 상한 |
 
 ### 기타 (기존 유지)

@@ -78,7 +78,7 @@ CREATE TABLE orders (
     created_at      TEXT    NOT NULL,    -- YYYY-MM-DD HH:MM:SS
     stock_code      TEXT    NOT NULL,    -- 종목코드 (005930)
     order_type      TEXT    NOT NULL,    -- BUY / SELL
-    order_reason    TEXT    NOT NULL,    -- … / EOD_CLOSE / FRIDAY_CLOSE(레거시) / STOP_LOSS / …
+    order_reason    TEXT    NOT NULL,    -- SCALPING_ENTRY / STOP_LOSS / TAKE_PROFIT / TRAILING_STOP / DEAD_CROSS / MAX_HOLDING / EOD_CLOSE / FRIDAY_CLOSE(레거시) / MANUAL
     order_method    TEXT    NOT NULL DEFAULT 'MARKET',  -- MARKET(시장가) / LIMIT(지정가)
     quantity        INTEGER NOT NULL,    -- 주문 수량
     price           INTEGER NOT NULL,    -- 주문 가격 (시장가면 0)
