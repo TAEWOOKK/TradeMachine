@@ -80,6 +80,24 @@ class OrderLogRepository:
             return None
         return row["created_at"][:10]
 
+    async def get_consecutive_stop_loss(self, today: str) -> int:
+        """오늘 매도 기록을 최신순으로 보면서 연속 STOP_LOSS 수를 반환."""
+        rows = await self._db.fetch_all(
+            """
+            SELECT order_reason FROM orders
+            WHERE order_type = 'SELL' AND success = 1 AND created_at LIKE ?
+            ORDER BY created_at DESC
+            """,
+            (f"{today}%",),
+        )
+        count = 0
+        for row in rows:
+            if row["order_reason"] == "STOP_LOSS":
+                count += 1
+            else:
+                break
+        return count
+
     async def get_today_counts(self, today: str) -> dict:
         row = await self._db.fetch_one(
             """

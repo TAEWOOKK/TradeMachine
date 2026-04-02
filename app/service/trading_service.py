@@ -55,6 +55,7 @@ class TradingService:
         self._event_bus = event_bus
         self._consecutive_failures: int = 0
         self._daily_buy_count: int = 0
+        self._consecutive_stop_loss: int = 0
         self._scan_running: bool = False
         self._highest_prices: dict[str, int] = {}
         self._trailing_activated: set[str] = set()
@@ -203,6 +204,7 @@ class TradingService:
         today = datetime.now().strftime("%Y-%m-%d")
         counts = await self._order_log.get_today_counts(today)
         self._daily_buy_count = counts["buy_count"]
+        self._consecutive_stop_loss = await self._order_log.get_consecutive_stop_loss(today)
 
         try:
             positions = await self._order.get_balance()
@@ -275,6 +277,7 @@ class TradingService:
 
         positions: list[Position] = []
         sell_count = buy_count = skip_count = error_count = 0
+        buy_block_reason = ""
 
         try:
             now = datetime.now()
@@ -329,21 +332,53 @@ class TradingService:
                     pass
             unfilled_codes = await self._cleanup_unfilled_orders()
 
-            # ── 매도 평가 ──
-            for pos in positions:
+            # ── 긴급 매도 체크: KOSPI 급락 시 전량 매도 ──
+            emergency_sell = False
+            if positions:
                 try:
-                    result = await self._evaluate_sell(pos, unfilled_codes)
-                    if result == "SOLD":
-                        sell_count += 1
-                    elif result == "SKIP":
-                        skip_count += 1
-                except Exception as exc:
-                    logger.exception("매도 판단 중 오류: %s", pos.stock_code)
-                    error_count += 1
-                    name = stock_fmt(pos.stock_code)
-                    self._emit(EventType.ERROR,
-                        f"❌ {name} 매도 판단 중 오류 — {type(exc).__name__}: {exc}",
-                        self._stock_data(pos.stock_code))
+                    kospi = await self._market.get_index_price("0001")
+                    if kospi.change_rate <= -1.5:
+                        emergency_sell = True
+                        self._emit(EventType.SELL_EVAL,
+                            f"🚨 KOSPI {kospi.change_rate:+.1f}% 급락! 보유 전종목 긴급 매도합니다")
+                        for pos in positions:
+                            try:
+                                pd = await self._market.get_current_price(pos.stock_code)
+                                cur = pd.current_price if pd.current_price > 0 else int(pos.avg_price)
+                                sold = await self._execute_sell(pos, OrderReason.STOP_LOSS, cur)
+                                if sold:
+                                    sell_count += 1
+                                    await self._cleanup_trailing(pos.stock_code)
+                                    name = stock_fmt(pos.stock_code)
+                                    self._emit(EventType.ORDER_EXEC,
+                                        f"🚨 {name} 긴급 매도 완료 (KOSPI {kospi.change_rate:+.1f}%)",
+                                        {"type": "SELL", "code": pos.stock_code,
+                                         "reason": "EMERGENCY", "price": cur, "success": True})
+                            except Exception:
+                                logger.exception("긴급 매도 중 오류: %s", pos.stock_code)
+                                error_count += 1
+                except Exception:
+                    logger.warning("KOSPI 긴급 체크 실패 — 일반 매도 평가로 진행")
+
+            # ── 매도 평가 ──
+            if not emergency_sell:
+                for pos in positions:
+                    try:
+                        result = await self._evaluate_sell(pos, unfilled_codes)
+                        if result == "SOLD":
+                            sell_count += 1
+                        elif result == "SKIP":
+                            skip_count += 1
+                    except Exception as exc:
+                        logger.exception("매도 판단 중 오류: %s", pos.stock_code)
+                        error_count += 1
+                        name = stock_fmt(pos.stock_code)
+                        self._emit(EventType.ERROR,
+                            f"❌ {name} 매도 판단 중 오류 — {type(exc).__name__}: {exc}",
+                            self._stock_data(pos.stock_code))
+
+            if emergency_sell:
+                buy_allowed = False
 
             if sell_count > 0:
                 refreshed = await self._order.get_balance()
@@ -360,20 +395,22 @@ class TradingService:
                 holding_codes = {p.stock_code for p in positions}
                 current_holding = len(positions)
 
+                buy_block_reason = ""
                 market_ok = await self._check_market_condition()
                 if not market_ok:
-                    self._emit(EventType.BUY_EVAL,
-                        "📉 시장 전체가 하락 추세라서 오늘은 새로운 매수를 하지 않습니다 (KOSPI < 20일 평균)")
+                    buy_block_reason = "시장 하락 추세 (KOSPI 기준)"
+                    buy_allowed = False
 
+                if buy_allowed and self._consecutive_stop_loss >= 2:
+                    buy_block_reason = f"연속 손절 {self._consecutive_stop_loss}회"
+                    buy_allowed = False
                 if (buy_allowed and self._settings.max_daily_buy_count > 0
                         and self._daily_buy_count >= self._settings.max_daily_buy_count):
-                    self._emit(EventType.BUY_EVAL,
-                        f"⏸️ 오늘 매수 한도({self._daily_buy_count}/{self._settings.max_daily_buy_count}건)를 모두 사용했어요")
+                    buy_block_reason = f"매수 한도 도달 ({self._daily_buy_count}/{self._settings.max_daily_buy_count}건)"
                     buy_allowed = False
                 if (self._settings.max_holding_count > 0
                         and buy_allowed and current_holding >= self._settings.max_holding_count):
-                    self._emit(EventType.BUY_EVAL,
-                        f"⏸️ 최대 보유 종목 수({self._settings.max_holding_count}개)에 도달했어요")
+                    buy_block_reason = f"보유 종목 한도 ({self._settings.max_holding_count}개)"
                     buy_allowed = False
 
                 for code in self._settings.watch_list_codes:
@@ -448,6 +485,8 @@ class TradingService:
             parts.append(f"{buy_count}건 매수")
         if error_count > 0:
             parts.append(f"오류 {error_count}건")
+        if buy_block_reason:
+            parts.append(f"매수 차단: {buy_block_reason}")
         if not parts:
             parts.append("매수/매도 조건에 해당하는 종목이 없었어요")
 
@@ -508,16 +547,20 @@ class TradingService:
         # P0: 손절
         if real_profit <= self._settings.stop_loss_rate:
             sold = await self._execute_sell(pos, OrderReason.STOP_LOSS, cur)
+            if sold:
+                self._consecutive_stop_loss += 1
             emoji = "🔴" if sold else "❌"
             self._emit(EventType.SELL_EVAL,
                 f"{emoji} {name} — 손실이 {real_profit:.1f}%에 달해 {'손절 매도했습니다' if sold else '손절 시도했으나 실패했어요'} "
-                f"(기준: {self._settings.stop_loss_rate}%)",
+                f"(기준: {self._settings.stop_loss_rate}%, 연속 손절 {self._consecutive_stop_loss}회)",
                 self._stock_data(code, cur, **sell_base, action="손절매도" if sold else "손절실패"))
             return "SOLD" if sold else "HOLD"
 
         # P1: 익절
         if real_profit >= self._settings.take_profit_rate:
             sold = await self._execute_sell(pos, OrderReason.TAKE_PROFIT, cur)
+            if sold:
+                self._consecutive_stop_loss = 0
             emoji = "🟢" if sold else "❌"
             self._emit(EventType.SELL_EVAL,
                 f"{emoji} {name} — 수익 {real_profit:.1f}% 달성! {'목표 수익에 도달해 매도했습니다' if sold else '매도 시도했으나 실패했어요'}",
@@ -545,6 +588,8 @@ class TradingService:
                 sold = await self._execute_sell(pos, OrderReason.TRAILING_STOP, cur)
                 if sold:
                     await self._cleanup_trailing(code)
+                    if real_profit > 0:
+                        self._consecutive_stop_loss = 0
                 emoji = "📉" if sold else "❌"
                 self._emit(EventType.SELL_EVAL,
                     f"{emoji} {name} — 고점({highest:,}원) 대비 하락해서 "
@@ -621,7 +666,7 @@ class TradingService:
         if not market_ok:
             return "SKIP"
 
-        # 단타: 장 초반 매수 보류 (변동성 완화 대기)
+        # 단타: 장 초반 매수 보류
         if self._settings.scalping_entry_minute > 0:
             now = datetime.now()
             market_open = now.replace(hour=9, minute=0, second=0, microsecond=0)
@@ -629,87 +674,44 @@ class TradingService:
                 return "SKIP"
             mins_since_open = (now - market_open).total_seconds() / 60
             if mins_since_open < self._settings.scalping_entry_minute:
-                self._emit(EventType.BUY_EVAL,
-                    f"⏰ {stock_fmt(stock_code)} — 장 시작 후 {self._settings.scalping_entry_minute}분 경과 전이라 매수 보류",
-                    self._stock_data(stock_code, 0, skip="장초반대기"))
                 return "SKIP"
 
         price_data = await self._market.get_current_price(stock_code)
 
         if price_data.is_stopped or price_data.is_managed:
-            self._emit(EventType.BUY_EVAL,
-                f"🚫 {name} — 거래정지 또는 관리종목이라 매수 대상에서 제외합니다",
-                self._stock_data(stock_code, price_data.current_price, skip="관리종목/거래정지"))
             return "SKIP"
         if price_data.is_caution or price_data.is_clearing:
-            self._emit(EventType.BUY_EVAL,
-                f"🚫 {name} — 투자유의/정리매매 종목이라 매수하지 않습니다",
-                self._stock_data(stock_code, price_data.current_price, skip="투자유의/정리매매"))
             return "SKIP"
         if price_data.current_price <= 0:
             return "SKIP"
         if abs(price_data.change_rate) > C.ABNORMAL_CHANGE_RATE:
-            self._emit(EventType.BUY_EVAL,
-                f"⚠️ {name} — 가격 변동이 비정상적({price_data.change_rate:+.1f}%)이라 매수를 보류합니다",
-                self._stock_data(stock_code, price_data.current_price, skip="비정상변동", change_rate=price_data.change_rate))
+            return "SKIP"
+        if price_data.current_price < C.MIN_STOCK_PRICE:
             return "SKIP"
 
-        if price_data.current_price < C.MIN_STOCK_PRICE:
-            self._emit(EventType.BUY_EVAL,
-                f"📊 {name} ({price_data.current_price:,}원) — 최소 주가 미달로 제외",
-                self._stock_data(stock_code, price_data.current_price, skip="최소주가미달"))
-            return "SKIP"
         elapsed_ratio = self._market_elapsed_ratio()
         adj_value = int(C.MIN_TRADING_VALUE * elapsed_ratio)
         adj_volume = int(C.MIN_TRADING_VOLUME * elapsed_ratio)
 
         if price_data.trading_value < adj_value:
-            self._emit(EventType.BUY_EVAL,
-                f"📊 {name} ({price_data.current_price:,}원) — 거래대금 부족으로 제외",
-                self._stock_data(stock_code, price_data.current_price, skip="거래대금부족"))
             return "SKIP"
         if price_data.volume < adj_volume:
-            self._emit(EventType.BUY_EVAL,
-                f"📊 {name} ({price_data.current_price:,}원) — 거래량 부족으로 제외",
-                self._stock_data(stock_code, price_data.current_price, skip="거래량부족"))
             return "SKIP"
         if price_data.market_cap < C.MIN_MARKET_CAP:
-            self._emit(EventType.BUY_EVAL,
-                f"📊 {name} ({price_data.current_price:,}원) — 시가총액 미달로 제외",
-                self._stock_data(stock_code, price_data.current_price, skip="시총미달"))
             return "SKIP"
         if price_data.current_price == price_data.upper_limit:
-            self._emit(EventType.BUY_EVAL,
-                f"⚠️ {name} — 상한가에 도달해 매수하지 않습니다",
-                self._stock_data(stock_code, price_data.current_price, skip="상한가"))
             return "SKIP"
 
-        # 단타: 전일 종가 대비 등락률(prdy_ctrt) — 하락 제외, 소폭 상승~과열 전 구간만
         cr = price_data.change_rate
-        if cr < 0:
-            self._emit(EventType.BUY_EVAL,
-                f"📉 {name} — 전일대비 {cr:+.1f}% 하락 중이라 매수 보류",
-                self._stock_data(stock_code, price_data.current_price, skip="하락중", change_rate=cr))
-            return "SKIP"
-        if cr < self._settings.min_intraday_change:
-            self._emit(EventType.BUY_EVAL,
-                f"📉 {name} — 전일대비 {cr:+.1f}%로 상승 미흡 (최소 {self._settings.min_intraday_change}%)",
-                self._stock_data(stock_code, price_data.current_price, skip="상승미흡", change_rate=cr))
+        if cr < 0 or cr < self._settings.min_intraday_change:
             return "SKIP"
         if cr > self._settings.max_intraday_change:
-            self._emit(EventType.BUY_EVAL,
-                f"🔥 {name} — 전일대비 {cr:+.1f}%로 이미 과열 (최대 {self._settings.max_intraday_change}%)",
-                self._stock_data(stock_code, price_data.current_price, skip="과열", change_rate=cr))
             return "SKIP"
 
         last_sell = await self._order_log.get_last_sell_time(stock_code)
         if last_sell:
             hours_since = (datetime.now() - last_sell).total_seconds() / 3600
             if hours_since < self._settings.rebuy_cooldown_hours:
-                remaining = self._settings.rebuy_cooldown_hours - hours_since
-                self._emit(EventType.BUY_EVAL,
-                    f"⏳ {name} — 최근에 매도한 종목이라 {remaining:.0f}시간 후 재매수 가능합니다",
-                    self._stock_data(stock_code, price_data.current_price, skip="재매수쿨다운", remaining_hours=round(remaining, 1)))
                 return "SKIP"
 
         candles = await self._market.get_daily_chart(stock_code)
@@ -726,33 +728,13 @@ class TradingService:
             rsi=round(rsi, 1) if rsi else None,
             change_rate=price_data.change_rate)
 
-        # 단타: SCALPING_ENTRY만 사용 (오르는 종목 + 상승 추세 + RSI)
-        if self._check_scalping_entry(ma_result, price_data.current_price, rsi):
-            buy_reason = OrderReason.SCALPING_ENTRY
-        else:
-            rel = ">" if ma5_now > ma20_now else "<"
-            gap_pct = round((ma5_now - ma20_now) / ma20_now * 100, 2) if ma20_now > 0 else 0
-            self._emit(EventType.BUY_EVAL,
-                f"📊 {name} ({price_data.current_price:,}원) — 단타 조건 미충족 "
-                f"(MA5:{ma5_now:,.0f} {rel} MA20:{ma20_now:,.0f}, 괴리율:{gap_pct:+.2f}%, RSI:{(f'{rsi:.0f}' if rsi is not None else '-')})",
-                {**ma_data, "skip": "단타조건미충족", "ma_gap_pct": gap_pct})
+        if not self._check_scalping_entry(ma_result, price_data.current_price, rsi):
             return "SKIP"
+        buy_reason = OrderReason.SCALPING_ENTRY
 
-        # RSI 범위 확인 (단타: 50~65, RSI 없으면 SKIP)
         if rsi is None:
-            self._emit(EventType.BUY_EVAL,
-                f"📊 {name} — RSI 계산 불가 (데이터 부족)로 매수 보류",
-                {**ma_data, "skip": "RSI불가"})
             return "SKIP"
-        if rsi < self._settings.rsi_scalping_min:
-            self._emit(EventType.BUY_EVAL,
-                f"❄️ {name} — RSI {rsi:.0f}로 모멘텀 부족 (최소 {self._settings.rsi_scalping_min})",
-                {**ma_data, "skip": "RSI부족", "rsi": rsi})
-            return "SKIP"
-        if rsi > self._settings.rsi_scalping_max:
-            self._emit(EventType.BUY_EVAL,
-                f"🔥 {name} — RSI {rsi:.0f}로 과열 (최대 {self._settings.rsi_scalping_max})",
-                {**ma_data, "skip": "RSI과열", "rsi": rsi})
+        if rsi < self._settings.rsi_scalping_min or rsi > self._settings.rsi_scalping_max:
             return "SKIP"
 
         price_with_fee = price_data.current_price * (1 + C.BUY_FEE_RATE)
@@ -868,6 +850,10 @@ class TradingService:
             return True
         try:
             kospi_data = await self._market.get_index_price("0001")
+
+            if kospi_data.change_rate <= -1.0:
+                return False
+
             kospi_candles = await self._market.get_daily_chart("0001", days=25)
             if len(kospi_candles) >= 20:
                 kospi_ma20 = sum(c.close for c in kospi_candles[:20]) / 20
@@ -1123,6 +1109,7 @@ class TradingService:
 
             await self._auth.get_token()
             self._daily_buy_count = 0
+            self._consecutive_stop_loss = 0
             self._consecutive_failures = 0
 
             positions = await self._order.get_balance()
@@ -1226,8 +1213,12 @@ class TradingService:
 
             total_eval = sum(p.current_price * p.quantity for p in positions)
             total_cost = sum(p.avg_price * p.quantity for p in positions)
-            total_profit = total_eval - total_cost
-            rate = (total_profit / total_cost * 100) if total_cost > 0 else 0.0
+            unrealized_pnl = total_eval - total_cost
+
+            realized = await self._order_log.get_today_realized_pnl(today)
+            today_realized = realized["total_pnl"]
+            total_profit = today_realized + unrealized_pnl
+            rate = (total_profit / 10_000_000 * 100) if total_profit != 0 else 0.0
 
             account = await self._order.get_account_summary()
             total_cash = account["total_cash"] if account else 0
@@ -1238,14 +1229,12 @@ class TradingService:
             if yesterday and yesterday.get("total_assets", 0) > 0:
                 prev_assets = yesterday["total_assets"]
                 asset_change = total_assets - prev_assets
-                trading_pnl = int(total_profit) - yesterday.get("eval_profit", 0)
-                deposit_withdrawal = asset_change - trading_pnl
+                deposit_withdrawal = asset_change - today_realized - unrealized_pnl
                 if abs(deposit_withdrawal) < 1000:
                     deposit_withdrawal = 0
 
             prev_cumulative = yesterday.get("cumulative_pnl", 0) if yesterday else 0
-            realized = await self._order_log.get_today_realized_pnl(today)
-            cumulative_pnl = prev_cumulative + realized["total_pnl"]
+            cumulative_pnl = prev_cumulative + today_realized
 
             if deposit_withdrawal != 0:
                 dw_type = "입금" if deposit_withdrawal > 0 else "출금"
@@ -1271,15 +1260,14 @@ class TradingService:
             )
             await self._report.save_balance_snapshot(today, positions)
 
-            profit_sign = "+" if total_profit >= 0 else ""
+            r_sign = "+" if today_realized >= 0 else ""
             parts = [f"보유 {len(positions)}종목"]
             if counts["buy_count"]:
                 parts.append(f"매수 {counts['buy_count']}건")
             if counts["sell_count"]:
                 parts.append(f"매도 {counts['sell_count']}건")
             parts.append(f"총자산 {total_assets:,}원")
-            if total_eval > 0:
-                parts.append(f"손익 {profit_sign}{int(total_profit):,}원 ({profit_sign}{rate:.2f}%)")
+            parts.append(f"오늘 실현손익 {r_sign}{today_realized:,}원")
             if deposit_withdrawal != 0:
                 dw_sign = "+" if deposit_withdrawal > 0 else ""
                 parts.append(f"입출금 {dw_sign}{deposit_withdrawal:,}원")
@@ -1288,7 +1276,8 @@ class TradingService:
             trade_logger.info(msg)
             self._emit(EventType.POST_MARKET, msg, {
                 "holding": len(positions), "eval": total_eval,
-                "profit": int(total_profit), "rate": round(rate, 2),
+                "realized": today_realized, "unrealized": int(unrealized_pnl),
+                "rate": round(rate, 2),
                 "total_cash": total_cash, "total_assets": total_assets,
                 "cumulative_pnl": cumulative_pnl,
             })

@@ -22,12 +22,12 @@ class TradingScheduler:
         )
         self._scheduler.add_job(
             self._service.run_scan,
-            "cron", day_of_week="mon-fri", hour="9-14", minute="*/5",
+            "cron", day_of_week="mon-fri", hour="9-14", minute="*/3",
             id="scan_cycle_main", replace_existing=True, max_instances=1,
         )
         self._scheduler.add_job(
             self._service.run_scan,
-            "cron", day_of_week="mon-fri", hour=15, minute="0,5,10,15,20,25",
+            "cron", day_of_week="mon-fri", hour=15, minute="0,3,6,9,12,15,18,21,24,27",
             id="scan_cycle_closing", replace_existing=True, max_instances=1,
         )
         self._scheduler.add_job(

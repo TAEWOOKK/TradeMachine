@@ -1056,7 +1056,7 @@ function updateCountdown(){
 
 setInterval(()=>{
   if(countdownSeconds>0) countdownSeconds--;
-  else if(countdownSeconds===0) countdownSeconds=300;
+  else if(countdownSeconds===0) countdownSeconds=180;
   updateCountdown();
 },1000);
 
@@ -1146,7 +1146,8 @@ function buildDetailHtml(d){
   if(d.ma20) items.push(['MA20',fmtNum(d.ma20)]);
   if(d.rsi!=null) items.push(['RSI',d.rsi]);
   if(d.change_rate!=null) items.push(['등락률',d.change_rate+'%']);
-  if(d.profit!=null) items.push(['수익률',(d.profit>=0?'+':'')+d.profit+'%']);
+  if(d.rate!=null) items.push(['수익률',(d.rate>=0?'+':'')+d.rate+'%']);
+  if(d.profit!=null && d.rate==null) items.push(['손익',(d.profit>=0?'+':'')+fmtWon(d.profit)]);
   if(d.avg_price) items.push(['평균단가',fmtWon(d.avg_price)]);
   if(d.qty) items.push(['수량',fmtNum(d.qty)+'주']);
   if(d.highest) items.push(['고점',fmtWon(d.highest)]);

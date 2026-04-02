@@ -50,7 +50,7 @@ async def get_status(
     status = svc.status
     now = datetime.now()
     minute = now.minute
-    next_min = (minute // 5 + 1) * 5
+    next_min = (minute // 3 + 1) * 3
     if next_min >= 60:
         next_scan = now.replace(hour=now.hour + 1, minute=0, second=0, microsecond=0)
     else:

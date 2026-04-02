@@ -12,6 +12,7 @@ def _make_settings():
     s = AsyncMock()
     s.trailing_stop_activate = 8.0
     s.watch_list_codes = []
+    s.max_daily_buy_count = 3
     return s
 
 
@@ -27,13 +28,19 @@ def _make_order_log_repo(
     return repo
 
 
+def _make_report_repo():
+    repo = AsyncMock()
+    repo.get_yesterday_report.return_value = None
+    return repo
+
+
 def _build_service(settings, order_repo=None, order_log_repo=None):
     return TradingService(
         auth_repo=AsyncMock(),
         market_repo=AsyncMock(),
         order_repo=order_repo or AsyncMock(),
         order_log_repo=order_log_repo or _make_order_log_repo(),
-        report_repo=AsyncMock(),
+        report_repo=_make_report_repo(),
         settings=settings,
     )
 
