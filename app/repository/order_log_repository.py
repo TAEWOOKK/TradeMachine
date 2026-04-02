@@ -5,7 +5,16 @@ from datetime import datetime
 
 from app.config import constants as C
 from app.core.database import Database
-from app.model.domain import OrderReason, OrderResult, OrderType
+from app.model.domain import (
+    EstimatedFees,
+    OrderReason,
+    OrderResult,
+    OrderType,
+    RealizedPnl,
+    RealizedTrade,
+    TodayCounts,
+    TrailingState,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -98,7 +107,7 @@ class OrderLogRepository:
                 break
         return count
 
-    async def get_today_counts(self, today: str) -> dict:
+    async def get_today_counts(self, today: str) -> TodayCounts:
         row = await self._db.fetch_one(
             """
             SELECT
@@ -111,14 +120,14 @@ class OrderLogRepository:
             (f"{today}%",),
         )
         if not row:
-            return {"buy_count": 0, "sell_count": 0, "fail_count": 0}
-        return {
-            "buy_count": row["buy_count"],
-            "sell_count": row["sell_count"],
-            "fail_count": row["fail_count"],
-        }
+            return TodayCounts(buy_count=0, sell_count=0, fail_count=0)
+        return TodayCounts(
+            buy_count=row["buy_count"],
+            sell_count=row["sell_count"],
+            fail_count=row["fail_count"],
+        )
 
-    async def get_today_realized_pnl(self, today: str) -> dict:
+    async def get_today_realized_pnl(self, today: str) -> RealizedPnl:
         """오늘 매도로 실현된 손익 계산."""
         rows = await self._db.fetch_all(
             """
@@ -143,20 +152,20 @@ class OrderLogRepository:
             (f"{today}%",),
         )
         total_pnl = 0
-        trades: list[dict] = []
+        trades: list[RealizedTrade] = []
         for r in rows:
             pnl = int((r["sell_price"] - r["avg_buy_price"]) * r["quantity"])
             total_pnl += pnl
-            trades.append({
-                "stock_code": r["stock_code"],
-                "quantity": r["quantity"],
-                "sell_price": r["sell_price"],
-                "avg_buy_price": int(r["avg_buy_price"]),
-                "pnl": pnl,
-            })
-        return {"total_pnl": total_pnl, "trades": trades}
+            trades.append(RealizedTrade(
+                stock_code=r["stock_code"],
+                quantity=r["quantity"],
+                sell_price=r["sell_price"],
+                avg_buy_price=int(r["avg_buy_price"]),
+                pnl=pnl,
+            ))
+        return RealizedPnl(total_pnl=total_pnl, trades=trades)
 
-    async def get_estimated_fees_taxes(self) -> dict:
+    async def get_estimated_fees_taxes(self) -> EstimatedFees:
         """전체 매매 내역 기준 추정 수수료·세금 합계 (누적)."""
         rows = await self._db.fetch_all(
             """
@@ -173,12 +182,12 @@ class OrderLogRepository:
                 sell_fee += int(amount * C.SELL_FEE_RATE)
                 sell_tax += int(amount * C.SELL_TAX_RATE)
         total = buy_fee + sell_fee + sell_tax
-        return {
-            "buy_fee": buy_fee,
-            "sell_fee": sell_fee,
-            "sell_tax": sell_tax,
-            "total": total,
-        }
+        return EstimatedFees(
+            buy_fee=buy_fee,
+            sell_fee=sell_fee,
+            sell_tax=sell_tax,
+            total=total,
+        )
 
     async def get_recent_orders(self, limit: int = 50) -> list[dict]:
         """최근 매매 내역(성공 건만) 반환."""
@@ -248,10 +257,18 @@ class OrderLogRepository:
              datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
         )
 
-    async def load_trailing_states(self) -> list[dict]:
-        return await self._db.fetch_all(
+    async def load_trailing_states(self) -> list[TrailingState]:
+        rows = await self._db.fetch_all(
             "SELECT stock_code, highest_price, activated FROM trailing_state"
         )
+        return [
+            TrailingState(
+                stock_code=r["stock_code"],
+                highest_price=r["highest_price"],
+                activated=bool(r["activated"]),
+            )
+            for r in rows
+        ]
 
     async def delete_trailing_state(self, stock_code: str) -> None:
         await self._db.execute(

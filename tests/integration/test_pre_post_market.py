@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from app.model.domain import OrderResult, Position
+from app.model.domain import AccountSummary, OrderResult, Position, TodayCounts
 from app.service.trading_service import TradingService
 
 
@@ -117,16 +117,16 @@ async def test_post_market_saves_report(mock_settings):
     order_repo = AsyncMock()
     order_repo.get_balance.return_value = positions
     order_repo.get_unfilled_orders.return_value = []
-    order_repo.get_account_summary.return_value = {
-        "total_cash": 5_000_000, "stock_eval": 1_127_000, "total_assets": 6_127_000,
-    }
+    order_repo.get_account_summary.return_value = AccountSummary(
+        total_cash=5_000_000, stock_eval=1_127_000, total_assets=6_127_000,
+    )
 
     order_log_repo = AsyncMock()
-    order_log_repo.get_today_counts.return_value = {
-        "buy_count": 2,
-        "sell_count": 1,
-        "fail_count": 0,
-    }
+    order_log_repo.get_today_counts.return_value = TodayCounts(
+        buy_count=2,
+        sell_count=1,
+        fail_count=0,
+    )
 
     report_repo = AsyncMock()
     report_repo.get_yesterday_report.return_value = None

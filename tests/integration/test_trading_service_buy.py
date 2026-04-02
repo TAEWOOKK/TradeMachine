@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from app.model.domain import (
+    AccountSummary,
     DailyCandle,
     OrderReason,
     OrderResult,
@@ -149,7 +150,9 @@ async def test_buy_on_golden_cross(mock_settings):
     market_repo.get_daily_chart.side_effect = _get_chart
 
     order_repo = AsyncMock()
-    order_repo.get_account_summary = AsyncMock(return_value={"total_cash": 10_000_000})
+    order_repo.get_account_summary = AsyncMock(return_value=AccountSummary(
+        total_cash=10_000_000, stock_eval=0, total_assets=10_000_000,
+    ))
     order_repo.get_available_cash.return_value = 10_000_000
     order_repo.execute_order.return_value = OrderResult(
         success=True, order_no="BUY001", error_message=None,
@@ -165,7 +168,7 @@ async def test_buy_on_golden_cross(mock_settings):
         order_log_repo=order_log_repo,
     )
 
-    result = await svc._evaluate_buy(
+    result = await svc.buy_evaluator.evaluate_buy(
         "005930",
         current_holding_count=0,
         holding_codes=set(),
@@ -197,7 +200,7 @@ async def test_skip_managed_stock(mock_settings):
 
     svc = _build_service(mock_settings, market_repo=market_repo)
 
-    result = await svc._evaluate_buy(
+    result = await svc.buy_evaluator.evaluate_buy(
         "005930", current_holding_count=0,
         holding_codes=set(), unfilled_codes=set(), market_ok=True,
     )
@@ -229,7 +232,7 @@ async def test_skip_low_price(mock_settings):
 
     svc = _build_service(mock_settings, market_repo=market_repo)
 
-    result = await svc._evaluate_buy(
+    result = await svc.buy_evaluator.evaluate_buy(
         "005930", current_holding_count=0,
         holding_codes=set(), unfilled_codes=set(), market_ok=True,
     )
@@ -254,7 +257,7 @@ async def test_skip_low_market_cap(mock_settings):
 
     svc = _build_service(mock_settings, market_repo=market_repo)
 
-    result = await svc._evaluate_buy(
+    result = await svc.buy_evaluator.evaluate_buy(
         "005930", current_holding_count=0,
         holding_codes=set(), unfilled_codes=set(), market_ok=True,
     )
@@ -276,7 +279,7 @@ async def test_skip_already_holding(mock_settings):
 
     svc = _build_service(mock_settings, market_repo=market_repo)
 
-    result = await svc._evaluate_buy(
+    result = await svc.buy_evaluator.evaluate_buy(
         "005930", current_holding_count=1,
         holding_codes={"005930"}, unfilled_codes=set(), market_ok=True,
     )
@@ -304,7 +307,7 @@ async def test_skip_daily_buy_limit(mock_settings):
     )
     svc._daily_buy_count = 3  # max_daily_buy_count = 3
 
-    result = await svc._evaluate_buy(
+    result = await svc.buy_evaluator.evaluate_buy(
         "005930", current_holding_count=0,
         holding_codes=set(), unfilled_codes=set(), market_ok=True,
     )
@@ -331,7 +334,7 @@ async def test_skip_rebuy_cooldown(mock_settings):
         mock_settings, market_repo=market_repo, order_log_repo=order_log_repo,
     )
 
-    result = await svc._evaluate_buy(
+    result = await svc.buy_evaluator.evaluate_buy(
         "005930", current_holding_count=0,
         holding_codes=set(), unfilled_codes=set(), market_ok=True,
     )
@@ -374,7 +377,7 @@ async def test_skip_no_golden_cross(mock_settings):
         mock_settings, market_repo=market_repo, order_log_repo=order_log_repo,
     )
 
-    result = await svc._evaluate_buy(
+    result = await svc.buy_evaluator.evaluate_buy(
         "005930", current_holding_count=0,
         holding_codes=set(), unfilled_codes=set(), market_ok=True,
     )
@@ -422,7 +425,7 @@ async def test_skip_rsi_overbought(mock_settings, sample_candles):
         mock_settings, market_repo=market_repo, order_log_repo=order_log_repo,
     )
 
-    result = await svc._evaluate_buy(
+    result = await svc.buy_evaluator.evaluate_buy(
         "005930", current_holding_count=0,
         holding_codes=set(), unfilled_codes=set(), market_ok=True,
     )
@@ -442,7 +445,7 @@ async def test_skip_market_filter_bearish(mock_settings):
 
     svc = _build_service(mock_settings, market_repo=market_repo)
 
-    result = await svc._evaluate_buy(
+    result = await svc.buy_evaluator.evaluate_buy(
         "005930", current_holding_count=0,
         holding_codes=set(), unfilled_codes=set(), market_ok=False,
     )
@@ -487,7 +490,7 @@ async def test_skip_volume_insufficient(mock_settings, sample_candles):
         mock_settings, market_repo=market_repo, order_log_repo=order_log_repo,
     )
 
-    result = await svc._evaluate_buy(
+    result = await svc.buy_evaluator.evaluate_buy(
         "005930", current_holding_count=0,
         holding_codes=set(), unfilled_codes=set(), market_ok=True,
     )
@@ -509,7 +512,7 @@ async def test_skip_at_upper_limit(mock_settings):
 
     svc = _build_service(mock_settings, market_repo=market_repo)
 
-    result = await svc._evaluate_buy(
+    result = await svc.buy_evaluator.evaluate_buy(
         "005930", current_holding_count=0,
         holding_codes=set(), unfilled_codes=set(), market_ok=True,
     )

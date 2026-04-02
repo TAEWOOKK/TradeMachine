@@ -16,6 +16,10 @@ from app.repository.order_log_repository import OrderLogRepository
 from app.repository.order_repository import OrderRepository
 from app.repository.report_repository import ReportRepository
 from app.scheduler.trading_scheduler import TradingScheduler
+from app.service.buy_evaluator import BuyEvaluator
+from app.service.indicator_service import IndicatorService
+from app.service.market_guard import MarketGuard
+from app.service.sell_evaluator import SellEvaluator
 from app.service.trading_service import TradingService
 
 logger = logging.getLogger(__name__)
@@ -64,6 +68,17 @@ async def init_dependencies() -> None:
         event_bus = get_event_bus()
         event_bus.set_report_repo(_report_repo)
 
+        indicator = IndicatorService(_settings)
+        market_guard = MarketGuard(_settings, _market_repo)
+        sell_evaluator = SellEvaluator(
+            _settings, _market_repo, _order_repo, _order_log_repo,
+            indicator, market_guard, event_bus,
+        )
+        buy_evaluator = BuyEvaluator(
+            _settings, _market_repo, _order_repo, _order_log_repo,
+            _report_repo, indicator, event_bus,
+        )
+
         _trading_service = TradingService(
             auth_repo=auth_repo,
             market_repo=_market_repo,
@@ -72,6 +87,10 @@ async def init_dependencies() -> None:
             report_repo=_report_repo,
             settings=_settings,
             event_bus=event_bus,
+            indicator=indicator,
+            sell_evaluator=sell_evaluator,
+            buy_evaluator=buy_evaluator,
+            market_guard=market_guard,
         )
 
         await _trading_service.recover_state()

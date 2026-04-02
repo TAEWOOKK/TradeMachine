@@ -6,13 +6,16 @@ from unittest.mock import AsyncMock, MagicMock, PropertyMock, call, patch
 import pytest
 
 from app.model.domain import (
+    AccountSummary,
     DailyCandle,
     OrderReason,
     OrderResult,
     OrderType,
     Position,
+    RealizedPnl,
     ScanResult,
     StockPrice,
+    TodayCounts,
 )
 from app.service.trading_service import TradingService
 
@@ -139,12 +142,12 @@ async def test_normal_trading_day(mock_settings):
     """
     auth_repo = AsyncMock()
     order_repo = AsyncMock()
-    order_repo.get_account_summary.return_value = {
-        "total_cash": 10_000_000, "stock_eval": 0, "total_assets": 10_000_000,
-    }
+    order_repo.get_account_summary.return_value = AccountSummary(
+        total_cash=10_000_000, stock_eval=0, total_assets=10_000_000,
+    )
     order_log_repo = AsyncMock()
     order_log_repo.get_last_sell_time.return_value = None
-    order_log_repo.get_today_realized_pnl.return_value = {"total_pnl": 0, "trades": []}
+    order_log_repo.get_today_realized_pnl.return_value = RealizedPnl(total_pnl=0, trades=[])
     report_repo = AsyncMock()
     report_repo.get_yesterday_report.return_value = None
     market_repo = AsyncMock()
@@ -226,9 +229,9 @@ async def test_normal_trading_day(mock_settings):
     market_repo.get_daily_chart.side_effect = _get_chart
 
     order_repo.get_available_cash.return_value = 10_000_000
-    order_repo.get_account_summary.return_value = {
-        "total_cash": 10_000_000, "stock_eval": 0, "total_assets": 10_000_000,
-    }
+    order_repo.get_account_summary.return_value = AccountSummary(
+        total_cash=10_000_000, stock_eval=0, total_assets=10_000_000,
+    )
     order_repo.execute_order.return_value = OrderResult(
         success=True, order_no="BUY001", error_message=None,
     )
@@ -254,12 +257,12 @@ async def test_normal_trading_day(mock_settings):
         ),
     ]
     order_repo.get_unfilled_orders.return_value = []
-    order_repo.get_account_summary.return_value = {
-        "total_cash": 3_000_000, "stock_eval": 976_860, "total_assets": 3_976_860,
-    }
-    order_log_repo.get_today_counts.return_value = {
-        "buy_count": 1, "sell_count": 1, "fail_count": 0,
-    }
+    order_repo.get_account_summary.return_value = AccountSummary(
+        total_cash=3_000_000, stock_eval=976_860, total_assets=3_976_860,
+    )
+    order_log_repo.get_today_counts.return_value = TodayCounts(
+        buy_count=1, sell_count=1, fail_count=0,
+    )
 
     post_time = datetime(2026, 3, 11, 15, 30)
     with patch("app.service.trading_service.datetime") as mock_dt:

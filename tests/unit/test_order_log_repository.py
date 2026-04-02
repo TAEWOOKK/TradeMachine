@@ -84,6 +84,6 @@ class TestOrderLogRepository:
         today = rows[0]["created_at"][:10]
 
         counts = await order_log_repo.get_today_counts(today)
-        assert counts["buy_count"] == 2
-        assert counts["sell_count"] == 1
-        assert counts["fail_count"] == 1
+        assert counts.buy_count == 2
+        assert counts.sell_count == 1
+        assert counts.fail_count == 1

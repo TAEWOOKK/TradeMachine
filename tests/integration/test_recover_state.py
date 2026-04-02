@@ -4,7 +4,7 @@ from __future__ import annotations
 import pytest
 from unittest.mock import AsyncMock
 
-from app.model.domain import Position
+from app.model.domain import Position, TodayCounts, TrailingState
 from app.service.trading_service import TradingService
 
 
@@ -17,13 +17,13 @@ def _make_settings():
 
 
 def _make_order_log_repo(
-    counts: dict | None = None,
-    trailing_states: list[dict] | None = None,
+    counts: TodayCounts | None = None,
+    trailing_states: list[TrailingState] | None = None,
 ):
     repo = AsyncMock()
-    repo.get_today_counts.return_value = counts or {
-        "buy_count": 0, "sell_count": 0, "fail_count": 0,
-    }
+    repo.get_today_counts.return_value = counts or TodayCounts(
+        buy_count=0, sell_count=0, fail_count=0,
+    )
     repo.load_trailing_states.return_value = trailing_states or []
     return repo
 
@@ -57,7 +57,7 @@ async def test_recover_state_restores_counts_and_trailing():
                  profit_rate=3.0, current_price=92700),
     ]
     order_log_repo = _make_order_log_repo(
-        counts={"buy_count": 2, "sell_count": 1, "fail_count": 0},
+        counts=TodayCounts(buy_count=2, sell_count=1, fail_count=0),
     )
 
     svc = _build_service(settings, order_repo=order_repo, order_log_repo=order_log_repo)
@@ -80,9 +80,9 @@ async def test_recover_state_restores_db_highest_price():
                  profit_rate=8.0, current_price=54000),
     ]
     order_log_repo = _make_order_log_repo(
-        counts={"buy_count": 1, "sell_count": 0, "fail_count": 0},
+        counts=TodayCounts(buy_count=1, sell_count=0, fail_count=0),
         trailing_states=[
-            {"stock_code": "005930", "highest_price": 58000, "activated": 1},
+            TrailingState(stock_code="005930", highest_price=58000, activated=True),
         ],
     )
 
@@ -103,9 +103,9 @@ async def test_recover_state_prefers_current_if_higher():
                  profit_rate=20.0, current_price=60000),
     ]
     order_log_repo = _make_order_log_repo(
-        counts={"buy_count": 1, "sell_count": 0, "fail_count": 0},
+        counts=TodayCounts(buy_count=1, sell_count=0, fail_count=0),
         trailing_states=[
-            {"stock_code": "005930", "highest_price": 58000, "activated": 1},
+            TrailingState(stock_code="005930", highest_price=58000, activated=True),
         ],
     )
 
@@ -123,7 +123,7 @@ async def test_recover_state_cleans_stale_trailing():
     order_repo.get_balance.return_value = []
     order_log_repo = _make_order_log_repo(
         trailing_states=[
-            {"stock_code": "999999", "highest_price": 10000, "activated": 1},
+            TrailingState(stock_code="999999", highest_price=10000, activated=True),
         ],
     )
 
@@ -141,7 +141,7 @@ async def test_recover_state_balance_failure():
     order_repo = AsyncMock()
     order_repo.get_balance.side_effect = Exception("network error")
     order_log_repo = _make_order_log_repo(
-        counts={"buy_count": 1, "sell_count": 0, "fail_count": 0},
+        counts=TodayCounts(buy_count=1, sell_count=0, fail_count=0),
     )
 
     svc = _build_service(settings, order_repo=order_repo, order_log_repo=order_log_repo)

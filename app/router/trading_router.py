@@ -2,10 +2,9 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends
 
-from app.core.dependencies import get_order_repo, get_trading_service
+from app.core.dependencies import get_trading_service
 from app.model.dto import OrderRequest, OrderResponse
 from app.model.domain import OrderType
-from app.repository.order_repository import OrderRepository
 from app.service.trading_service import TradingService
 
 router = APIRouter(prefix="/trading", tags=["trading"])
@@ -22,10 +21,10 @@ async def trigger_scan(
 @router.post("/order", response_model=OrderResponse)
 async def manual_order(
     req: OrderRequest,
-    order_repo: OrderRepository = Depends(get_order_repo),
+    service: TradingService = Depends(get_trading_service),
 ) -> OrderResponse:
     order_type = OrderType(req.order_type)
-    result = await order_repo.execute_order(
+    result = await service.execute_manual_order(
         stock_code=req.stock_code,
         order_type=order_type,
         quantity=req.quantity,

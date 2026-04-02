@@ -84,3 +84,55 @@ class ScanResult:
     api_call_count: int
     elapsed_ms: int
     note: str | None = None
+
+
+@dataclass
+class TodayCounts:
+    buy_count: int
+    sell_count: int
+    fail_count: int
+
+
+@dataclass
+class RealizedTrade:
+    stock_code: str
+    quantity: int
+    sell_price: int
+    avg_buy_price: int
+    pnl: int
+
+
+@dataclass
+class RealizedPnl:
+    total_pnl: int
+    trades: list[RealizedTrade]
+
+
+@dataclass
+class AccountSummary:
+    total_cash: int
+    stock_eval: int
+    total_assets: int
+
+
+@dataclass
+class TrailingState:
+    stock_code: str
+    highest_price: int
+    activated: bool
+
+
+@dataclass
+class EstimatedFees:
+    buy_fee: int
+    sell_fee: int
+    sell_tax: int
+    total: int
+
+
+@dataclass
+class BotEventRecord:
+    type: str
+    message: str
+    timestamp: float
+    data: dict | None

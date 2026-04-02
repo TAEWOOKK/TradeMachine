@@ -4,7 +4,7 @@ import json
 from datetime import datetime, timedelta
 
 from app.core.database import Database
-from app.model.domain import Position, ScanResult
+from app.model.domain import BotEventRecord, Position, ScanResult
 
 
 class ReportRepository:
@@ -61,10 +61,16 @@ class ReportRepository:
                  p.current_price, p.current_price * p.quantity, p.profit_rate),
             )
 
+    _REPORT_COLUMNS = (
+        "report_date, buy_count, sell_count, unfilled_count, holding_count,"
+        " eval_amount, eval_profit, profit_rate, total_cash, total_assets,"
+        " deposit_withdrawal, cumulative_pnl"
+    )
+
     async def get_yesterday_report(self, today: str) -> dict | None:
         """오늘 이전의 가장 최근 리포트를 반환."""
         return await self._db.fetch_one(
-            """SELECT * FROM daily_reports
+            f"""SELECT {self._REPORT_COLUMNS} FROM daily_reports
                WHERE report_date < ? ORDER BY report_date DESC LIMIT 1""",
             (today,),
         )
@@ -72,12 +78,15 @@ class ReportRepository:
     async def get_first_report(self) -> dict | None:
         """가장 첫 기록일 리포트 반환 (자산 흐름 기준점용)."""
         return await self._db.fetch_one(
-            "SELECT * FROM daily_reports ORDER BY report_date ASC LIMIT 1",
+            f"SELECT {self._REPORT_COLUMNS} FROM daily_reports ORDER BY report_date ASC LIMIT 1",
         )
+
+    def _cutoff_date(self, days: int) -> str:
+        return (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
 
     async def get_deposit_withdrawal_sum(self, days: int = 365) -> int:
         """입출금 합계 (양수=입금, 음수=출금)."""
-        cutoff = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+        cutoff = self._cutoff_date(days)
         row = await self._db.fetch_one(
             """SELECT COALESCE(SUM(amount), 0) AS total
                FROM capital_events WHERE event_date >= ?""",
@@ -86,7 +95,7 @@ class ReportRepository:
         return int(row["total"]) if row and row["total"] is not None else 0
 
     async def get_performance_history(self, days: int = 90) -> list[dict]:
-        cutoff = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+        cutoff = self._cutoff_date(days)
         return await self._db.fetch_all(
             """SELECT report_date, eval_amount, eval_profit, profit_rate,
                       total_cash, total_assets, deposit_withdrawal, cumulative_pnl
@@ -97,7 +106,7 @@ class ReportRepository:
         )
 
     async def get_capital_events(self, days: int = 90) -> list[dict]:
-        cutoff = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+        cutoff = self._cutoff_date(days)
         return await self._db.fetch_all(
             """SELECT event_date, amount, detected_auto, note
                FROM capital_events WHERE event_date >= ?
@@ -148,26 +157,26 @@ class ReportRepository:
              datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
         )
 
-    async def get_recent_bot_events(self, limit: int = 200) -> list[dict]:
+    async def get_recent_bot_events(self, limit: int = 200) -> list[BotEventRecord]:
         rows = await self._db.fetch_all(
             """SELECT event_type, message, timestamp, data
                FROM bot_events
                ORDER BY id DESC LIMIT ?""",
             (limit,),
         )
-        result = []
+        result: list[BotEventRecord] = []
         for row in reversed(rows):
             d = row.get("data")
-            result.append({
-                "type": row["event_type"],
-                "message": row["message"],
-                "timestamp": row["timestamp"],
-                "data": json.loads(d) if d else None,
-            })
+            result.append(BotEventRecord(
+                type=row["event_type"],
+                message=row["message"],
+                timestamp=row["timestamp"],
+                data=json.loads(d) if d else None,
+            ))
         return result
 
     async def cleanup_old_bot_events(self, days: int = 30) -> int:
-        cutoff = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+        cutoff = self._cutoff_date(days)
         cursor = await self._db.execute(
             "DELETE FROM bot_events WHERE created_at < ?", (cutoff,),
         )

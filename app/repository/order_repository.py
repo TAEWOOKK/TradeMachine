@@ -9,7 +9,7 @@ from app.config.settings import Settings
 from app.core.exceptions import KisApiError
 from app.core.rate_limiter import RateLimiter
 from app.core.utils import safe_float, safe_int
-from app.model.domain import OrderResult, OrderType, Position
+from app.model.domain import AccountSummary, OrderResult, OrderType, Position
 from app.repository.kis_auth_repository import KisAuthRepository
 
 logger = logging.getLogger(__name__)
@@ -28,10 +28,8 @@ class OrderRepository:
         self._auth_repo = auth_repo
         self._rate_limiter = rate_limiter
 
-    async def get_balance(self) -> list[Position] | None:
-        tr_id = self._auth_repo.get_tr_id("TTTC8434R")
-        headers = await self._auth_repo.get_common_headers(tr_id)
-        params = {
+    def _balance_params(self) -> dict:
+        return {
             "CANO": self._settings.kis_cano,
             "ACNT_PRDT_CD": self._settings.kis_acnt_prdt_cd,
             "AFHR_FLPR_YN": "N",
@@ -44,22 +42,36 @@ class OrderRepository:
             "CTX_AREA_FK100": "",
             "CTX_AREA_NK100": "",
         }
+
+    async def _safe_request(
+        self, method: str, url: str, label: str, **kwargs: object,
+    ) -> dict | None:
         try:
             await self._rate_limiter.acquire()
-            resp = await self._client.get(
-                "/uapi/domestic-stock/v1/trading/inquire-balance",
-                headers=headers,
-                params=params,
-            )
-            data = resp.json()
+            if method == "GET":
+                resp = await self._client.get(url, **kwargs)
+            else:
+                resp = await self._client.post(url, **kwargs)
+            return resp.json()
         except httpx.TimeoutException as e:
-            logger.warning("잔고 조회 타임아웃: %s", type(e).__name__)
+            logger.warning("%s 타임아웃: %s", label, type(e).__name__)
             return None
         except httpx.RequestError as e:
-            logger.warning("잔고 조회 네트워크 오류: %s — %s", type(e).__name__, e)
+            logger.warning("%s 네트워크 오류: %s — %s", label, type(e).__name__, e)
             return None
         except Exception as e:
-            logger.warning("잔고 조회 예외: %s — %s", type(e).__name__, e)
+            logger.warning("%s 예외: %s — %s", label, type(e).__name__, e)
+            return None
+
+    async def get_balance(self) -> list[Position] | None:
+        tr_id = self._auth_repo.get_tr_id("TTTC8434R")
+        headers = await self._auth_repo.get_common_headers(tr_id)
+        params = self._balance_params()
+        data = await self._safe_request(
+            "GET", "/uapi/domestic-stock/v1/trading/inquire-balance",
+            "잔고 조회", headers=headers, params=params,
+        )
+        if data is None:
             return None
 
         if data.get("rt_cd") != "0":
@@ -163,39 +175,16 @@ class OrderRepository:
         logger.warning("주문 취소 실패: %s — [%s] %s", order_no, data.get("msg_cd", ""), data.get("msg1", ""))
         return False
 
-    async def get_account_summary(self) -> dict[str, int] | None:
+    async def get_account_summary(self) -> AccountSummary | None:
         """계좌 요약 정보 반환 (예수금, 주식평가, 총자산)."""
         tr_id = self._auth_repo.get_tr_id("TTTC8434R")
         headers = await self._auth_repo.get_common_headers(tr_id)
-        params = {
-            "CANO": self._settings.kis_cano,
-            "ACNT_PRDT_CD": self._settings.kis_acnt_prdt_cd,
-            "AFHR_FLPR_YN": "N",
-            "OFL_YN": "",
-            "INQR_DVSN": "02",
-            "UNPR_DVSN": "01",
-            "FUND_STTL_ICLD_YN": "N",
-            "FNCG_AMT_AUTO_RDPT_YN": "N",
-            "PRCS_DVSN": "00",
-            "CTX_AREA_FK100": "",
-            "CTX_AREA_NK100": "",
-        }
-        try:
-            await self._rate_limiter.acquire()
-            resp = await self._client.get(
-                "/uapi/domestic-stock/v1/trading/inquire-balance",
-                headers=headers,
-                params=params,
-            )
-            data = resp.json()
-        except httpx.TimeoutException as e:
-            logger.warning("계좌 요약 조회 타임아웃: %s", type(e).__name__)
-            return None
-        except httpx.RequestError as e:
-            logger.warning("계좌 요약 네트워크 오류: %s — %s", type(e).__name__, e)
-            return None
-        except Exception as e:
-            logger.warning("계좌 요약 예외: %s — %s", type(e).__name__, e)
+        params = self._balance_params()
+        data = await self._safe_request(
+            "GET", "/uapi/domestic-stock/v1/trading/inquire-balance",
+            "계좌 요약", headers=headers, params=params,
+        )
+        if data is None:
             return None
 
         if data.get("rt_cd") != "0":
@@ -211,11 +200,11 @@ class OrderRepository:
             if dnca > 0:
                 total_cash = dnca
                 logger.info("tot_evlu-scts=0 → dnca_tot_amt(예수금) %s원 사용", f"{dnca:,}")
-        return {
-            "total_cash": total_cash,
-            "stock_eval": stock_eval,
-            "total_assets": total_assets,
-        }
+        return AccountSummary(
+            total_cash=total_cash,
+            stock_eval=stock_eval,
+            total_assets=total_assets,
+        )
 
     async def get_available_cash(self, stock_code: str) -> int:
         tr_id = self._auth_repo.get_tr_id("TTTC8908R")

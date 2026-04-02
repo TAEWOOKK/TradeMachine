@@ -86,7 +86,7 @@ async def test_stop_loss_triggers_sell(mock_settings):
         avg_price=70000.0, profit_rate=-6.0, current_price=65800,
     )
 
-    result = await svc._evaluate_sell(pos, unfilled_codes=set())
+    result = await svc.sell_evaluator.evaluate_sell(pos, unfilled_codes=set())
 
     assert result == "SOLD"
     order_repo.execute_order.assert_called_once_with(
@@ -125,7 +125,7 @@ async def test_take_profit_triggers_sell(mock_settings):
         avg_price=70000.0, profit_rate=16.0, current_price=81200,
     )
 
-    result = await svc._evaluate_sell(pos, unfilled_codes=set())
+    result = await svc.sell_evaluator.evaluate_sell(pos, unfilled_codes=set())
 
     assert result == "SOLD"
     order_repo.execute_order.assert_called_once_with(
@@ -167,7 +167,7 @@ async def test_trailing_stop_triggers_sell(mock_settings):
         stock_code="005930", quantity=10,
         avg_price=10000.0, profit_rate=9.0, current_price=10900,
     )
-    result1 = await svc._evaluate_sell(pos_first, unfilled_codes=set())
+    result1 = await svc.sell_evaluator.evaluate_sell(pos_first, unfilled_codes=set())
     assert result1 == "HOLD"
     assert "005930" in svc._trailing_activated
 
@@ -180,7 +180,7 @@ async def test_trailing_stop_triggers_sell(mock_settings):
         stock_code="005930", quantity=10,
         avg_price=10000.0, profit_rate=5.0, current_price=10500,
     )
-    result2 = await svc._evaluate_sell(pos_second, unfilled_codes=set())
+    result2 = await svc.sell_evaluator.evaluate_sell(pos_second, unfilled_codes=set())
 
     assert result2 == "SOLD"
     saved_reason = order_log_repo.save_order.call_args[0][2]
@@ -219,7 +219,7 @@ async def test_max_holding_days_triggers_sell(mock_settings):
         stock_code="005930", quantity=10,
         avg_price=70000.0, profit_rate=1.4, current_price=71000,
     )
-    result = await svc._evaluate_sell(pos, unfilled_codes=set())
+    result = await svc.sell_evaluator.evaluate_sell(pos, unfilled_codes=set())
 
     assert result == "SOLD"
     saved_reason = order_log_repo.save_order.call_args[0][2]
@@ -256,7 +256,7 @@ async def test_dead_cross_triggers_sell(mock_settings, sample_candles_dead_cross
         stock_code="005930", quantity=10,
         avg_price=9000.0, profit_rate=2.2, current_price=9200,
     )
-    result = await svc._evaluate_sell(pos, unfilled_codes=set())
+    result = await svc.sell_evaluator.evaluate_sell(pos, unfilled_codes=set())
 
     assert result == "SOLD"
     saved_reason = order_log_repo.save_order.call_args[0][2]
@@ -288,7 +288,7 @@ async def test_no_sell_on_hold(mock_settings):
         stock_code="005930", quantity=10,
         avg_price=70000.0, profit_rate=3.0, current_price=72100,
     )
-    result = await svc._evaluate_sell(pos, unfilled_codes=set())
+    result = await svc.sell_evaluator.evaluate_sell(pos, unfilled_codes=set())
 
     assert result == "HOLD"
 
@@ -307,7 +307,7 @@ async def test_skip_if_stopped(mock_settings):
         stock_code="005930", quantity=10,
         avg_price=70000.0, profit_rate=-6.0, current_price=70000,
     )
-    result = await svc._evaluate_sell(pos, unfilled_codes=set())
+    result = await svc.sell_evaluator.evaluate_sell(pos, unfilled_codes=set())
 
     assert result == "SKIP"
 
@@ -324,7 +324,7 @@ async def test_skip_if_unfilled(mock_settings):
         stock_code="005930", quantity=10,
         avg_price=70000.0, profit_rate=-6.0, current_price=70000,
     )
-    result = await svc._evaluate_sell(pos, unfilled_codes={"005930"})
+    result = await svc.sell_evaluator.evaluate_sell(pos, unfilled_codes={"005930"})
 
     assert result == "SKIP"
 
@@ -358,8 +358,8 @@ async def test_stop_loss_retries_on_failure(mock_settings):
         avg_price=70000.0, profit_rate=-6.0, current_price=65000,
     )
 
-    with patch("app.service.trading_service.asyncio.sleep", new_callable=AsyncMock):
-        result = await svc._evaluate_sell(pos, unfilled_codes=set())
+    with patch("app.service.sell_evaluator.asyncio.sleep", new_callable=AsyncMock):
+        result = await svc.sell_evaluator.evaluate_sell(pos, unfilled_codes=set())
 
     assert result == "SOLD"
     assert order_repo.execute_order.call_count == 2

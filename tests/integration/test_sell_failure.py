@@ -65,7 +65,7 @@ async def test_trailing_stop_failure_preserves_state():
         avg_price=9000.0, profit_rate=10.0, current_price=9400,
     )
 
-    result = await svc._evaluate_sell(pos, unfilled_codes=set())
+    result = await svc.sell_evaluator.evaluate_sell(pos, unfilled_codes=set())
 
     assert result == "HOLD"
     assert "005930" in svc._trailing_activated
@@ -99,7 +99,7 @@ async def test_stop_loss_failure_returns_hold():
         avg_price=10000.0, profit_rate=-10.0, current_price=9000,
     )
 
-    result = await svc._evaluate_sell(pos, unfilled_codes=set())
+    result = await svc.sell_evaluator.evaluate_sell(pos, unfilled_codes=set())
 
     assert result == "HOLD"
     assert order_repo.execute_order.call_count == 2
